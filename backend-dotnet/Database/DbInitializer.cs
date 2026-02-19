@@ -5,9 +5,13 @@ namespace Mozaika.Api.Database;
 
 public static class DbInitializer
 {
-    public static async Task SeedAsync(MozaikaDbContext dbContext)
+    public static async Task SeedAsync(MozaikaDbContext dbContext, bool seedDefaults = true)
     {
         await dbContext.Database.EnsureCreatedAsync();
+        if (!seedDefaults)
+        {
+            return;
+        }
 
         var settings = await dbContext.AppSettings.FindAsync(1);
         if (settings is null)

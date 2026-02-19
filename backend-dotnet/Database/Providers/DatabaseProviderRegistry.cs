@@ -6,6 +6,8 @@ namespace Mozaika.Api.Database.Providers;
 public interface IDatabaseProviderRegistry
 {
     void Configure(DbContextOptionsBuilder optionsBuilder, DatabaseOptions options);
+    IReadOnlyList<string> GetSupportedProviderNames();
+    bool IsSupported(string providerName);
 }
 
 public sealed class DatabaseProviderRegistry : IDatabaseProviderRegistry
@@ -18,6 +20,7 @@ public sealed class DatabaseProviderRegistry : IDatabaseProviderRegistry
             new SqliteDatabaseProvider(),
             new PostgresDatabaseProvider(),
             new SqlServerDatabaseProvider(),
+            new MySqlDatabaseProvider(),
         ];
         _providers = providers.ToDictionary(
             provider => provider.Name,
@@ -45,4 +48,12 @@ public sealed class DatabaseProviderRegistry : IDatabaseProviderRegistry
 
         provider.Configure(optionsBuilder, options.ConnectionString);
     }
+
+    public IReadOnlyList<string> GetSupportedProviderNames() =>
+        _providers.Keys
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    public bool IsSupported(string providerName) =>
+        !string.IsNullOrWhiteSpace(providerName) && _providers.ContainsKey(providerName.Trim());
 }

@@ -3,6 +3,8 @@ import type {
   BootstrapResponse,
   ColorCreate,
   ColorRead,
+  DatabaseConfigRead,
+  DatabaseConfigUpdate,
   GroutColorCreate,
   GroutColorRead,
   MosaicGenerateResponse,
@@ -78,6 +80,22 @@ export async function updateSettings(
   return handleJsonResponse<AdminSettingsRead>(response);
 }
 
+export async function fetchDatabaseConfig(): Promise<DatabaseConfigRead> {
+  const response = await fetch(`${API_BASE}/api/admin/database`);
+  return handleJsonResponse<DatabaseConfigRead>(response);
+}
+
+export async function configureDatabase(
+  payload: DatabaseConfigUpdate,
+): Promise<DatabaseConfigRead> {
+  const response = await fetch(`${API_BASE}/api/admin/database`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleJsonResponse<DatabaseConfigRead>(response);
+}
+
 export async function createGroutColor(payload: GroutColorCreate): Promise<GroutColorRead> {
   const response = await fetch(`${API_BASE}/api/admin/grout-colors`, {
     method: "POST",
@@ -137,4 +155,3 @@ export async function generateMosaic(
   });
   return handleJsonResponse<MosaicGenerateResponse>(response);
 }
-

@@ -1,7 +1,6 @@
 ﻿using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 using Mozaika.Api.Contracts;
 using Mozaika.Api.Database;
 using Mozaika.Api.Database.Providers;
@@ -11,14 +10,15 @@ using Mozaika.Api.Services;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.Configure<MozaikaOptions>(builder.Configuration.GetSection("Mozaika"));
-builder.Services.Configure<DatabaseOptions>(builder.Configuration.GetSection("Mozaika:Database"));
+var initialDatabaseOptions = builder.Configuration.GetSection("Mozaika:Database").Get<DatabaseOptions>() ?? new DatabaseOptions();
 
 builder.Services.AddSingleton<IDatabaseProviderRegistry, DatabaseProviderRegistry>();
+builder.Services.AddSingleton(new RuntimeDatabaseSettingsStore(initialDatabaseOptions));
 builder.Services.AddScoped<MosaicService>();
 
 builder.Services.AddDbContext<MozaikaDbContext>((serviceProvider, optionsBuilder) =>
 {
-    var dbOptions = serviceProvider.GetRequiredService<IOptions<DatabaseOptions>>().Value;
+    var dbOptions = serviceProvider.GetRequiredService<RuntimeDatabaseSettingsStore>().GetSnapshot();
     var dbProviderRegistry = serviceProvider.GetRequiredService<IDatabaseProviderRegistry>();
     dbProviderRegistry.Configure(optionsBuilder, dbOptions);
 
@@ -84,3 +84,4 @@ if (app.Environment.IsDevelopment())
 app.UseCors();
 app.MapControllers();
 app.Run();
+

@@ -40,6 +40,21 @@ export interface AdminSettingsRead {
   updated_at: string;
 }
 
+export interface DatabaseConfigRead {
+  provider: string;
+  connection_string: string;
+  echo: boolean;
+  supported_providers: string[];
+}
+
+export interface DatabaseConfigUpdate {
+  provider: string;
+  connection_string: string;
+  echo?: boolean;
+  create_schema?: boolean;
+  seed_defaults?: boolean;
+}
+
 export interface BootstrapResponse {
   settings: AdminSettingsRead;
   colors: ColorRead[];
@@ -84,4 +99,3 @@ export interface StudioFormState {
   offsetXmm: number;
   offsetYmm: number;
 }
-

@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
+  configureDatabase,
   createColor,
   createColorsBulk,
   createGroutColor,
   deactivateColor,
   deactivateGroutColor,
   fetchBootstrap,
+  fetchDatabaseConfig,
   generateMosaic,
   patchColor,
   patchGroutColor,
@@ -16,6 +18,7 @@ import type {
   BootstrapResponse,
   ColorCreate,
   ColorRead,
+  DatabaseConfigUpdate,
   GroutColorCreate,
   GroutColorRead,
   MosaicGenerateResponse,
@@ -242,6 +245,21 @@ function parseBulkPaletteRows(raw: string): ColorCreate[] {
   });
 }
 
+function providerConnectionHint(provider: string): string {
+  switch (provider) {
+    case "sqlite":
+      return "Пример SQLite: Data Source=C:\\\\Users\\\\mikedell\\\\Mozaika\\\\backend\\\\mozaika.local.db";
+    case "postgres":
+      return "Пример PostgreSQL: Host=localhost;Port=5432;Database=mozaika;Username=postgres;Password=postgres";
+    case "sqlserver":
+      return "Пример SQL Server: Server=localhost;Database=mozaika;User Id=sa;Password=YourStrong!Passw0rd;TrustServerCertificate=True";
+    case "mysql":
+      return "Пример MySQL: Server=localhost;Port=3306;Database=mozaika;User=root;Password=pass;";
+    default:
+      return "Укажите строку подключения выбранного провайдера.";
+  }
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabKey>("studio");
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
@@ -286,6 +304,19 @@ export default function App() {
     default_cell_size_mm: 10,
     default_gap_mm: 2,
   });
+  const [dbDraft, setDbDraft] = useState<DatabaseConfigUpdate>({
+    provider: "sqlite",
+    connection_string: "Data Source=C:\\Users\\mikedell\\Mozaika\\backend\\mozaika.local.db",
+    echo: false,
+    create_schema: true,
+    seed_defaults: true,
+  });
+  const [supportedDbProviders, setSupportedDbProviders] = useState<string[]>([
+    "sqlite",
+    "postgres",
+    "sqlserver",
+    "mysql",
+  ]);
 
   const [newGroutForm, setNewGroutForm] = useState<GroutColorCreate>({
     name: "",
@@ -325,6 +356,7 @@ export default function App() {
     setError(null);
     try {
       const payload = await fetchBootstrap();
+      const dbConfig = await fetchDatabaseConfig();
       setBootstrap(payload);
       setSettingsDraft({
         default_field_width_mm: payload.settings.default_field_width_mm,
@@ -332,6 +364,15 @@ export default function App() {
         default_cell_size_mm: payload.settings.default_cell_size_mm,
         default_gap_mm: payload.settings.default_gap_mm,
       });
+      setDbDraft((current) => ({
+        ...current,
+        provider: dbConfig.provider,
+        connection_string: dbConfig.connection_string,
+        echo: dbConfig.echo,
+      }));
+      if (dbConfig.supported_providers.length > 0) {
+        setSupportedDbProviders(dbConfig.supported_providers);
+      }
 
       const firstActiveGrout = payload.grout_colors.find((color) => color.is_active) ?? null;
       const activeColorCount = Math.max(
@@ -662,6 +703,41 @@ export default function App() {
       setNotice("Настройки сохранены.");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Не удалось сохранить настройки.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onSaveDatabaseConfig = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const payload = await configureDatabase({
+        provider: dbDraft.provider.trim().toLowerCase(),
+        connection_string: dbDraft.connection_string.trim(),
+        echo: Boolean(dbDraft.echo),
+        create_schema: Boolean(dbDraft.create_schema),
+        seed_defaults: Boolean(dbDraft.seed_defaults),
+      });
+      setDbDraft((current) => ({
+        ...current,
+        provider: payload.provider,
+        connection_string: payload.connection_string,
+        echo: payload.echo,
+      }));
+      if (payload.supported_providers.length > 0) {
+        setSupportedDbProviders(payload.supported_providers);
+      }
+      await refreshBootstrap();
+      setNotice("Провайдер БД применен. Структура базы подготовлена.");
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Не удалось применить подключение к базе данных.",
+      );
     } finally {
       setBusy(false);
     }
@@ -1332,6 +1408,96 @@ export default function App() {
               <div className="actions">
                 <button type="submit" className="button-primary" disabled={busy}>
                   Сохранить
+                </button>
+              </div>
+            </form>
+            <h3>База данных</h3>
+            <p className="muted">
+              Выберите провайдер и строку подключения. Кнопка ниже может создать таблицы и базовую структуру.
+            </p>
+            <form onSubmit={onSaveDatabaseConfig} className="form-grid">
+              <label>
+                <LabelTitle
+                  text="Провайдер БД"
+                  hint="Доступные варианты: sqlite, postgres, sqlserver, mysql."
+                />
+                <select
+                  value={dbDraft.provider}
+                  onChange={(event) =>
+                    setDbDraft((current) => ({
+                      ...current,
+                      provider: event.target.value,
+                    }))
+                  }
+                >
+                  {supportedDbProviders.map((provider) => (
+                    <option key={provider} value={provider}>
+                      {provider}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <LabelTitle
+                  text="Строка подключения"
+                  hint="Используется для подключения к выбранной базе данных."
+                />
+                <textarea
+                  rows={3}
+                  value={dbDraft.connection_string}
+                  onChange={(event) =>
+                    setDbDraft((current) => ({
+                      ...current,
+                      connection_string: event.target.value,
+                    }))
+                  }
+                  required
+                />
+              </label>
+              <p className="muted">{providerConnectionHint(dbDraft.provider)}</p>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={Boolean(dbDraft.echo)}
+                  onChange={(event) =>
+                    setDbDraft((current) => ({
+                      ...current,
+                      echo: event.target.checked,
+                    }))
+                  }
+                />
+                Включить SQL-лог (echo)
+              </label>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={Boolean(dbDraft.create_schema)}
+                  onChange={(event) =>
+                    setDbDraft((current) => ({
+                      ...current,
+                      create_schema: event.target.checked,
+                    }))
+                  }
+                />
+                Создать таблицы и структуру
+              </label>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={Boolean(dbDraft.seed_defaults)}
+                  disabled={!dbDraft.create_schema}
+                  onChange={(event) =>
+                    setDbDraft((current) => ({
+                      ...current,
+                      seed_defaults: event.target.checked,
+                    }))
+                  }
+                />
+                Заполнить базовые данные (настройки и цвета шва)
+              </label>
+              <div className="actions">
+                <button type="submit" className="button-secondary" disabled={busy}>
+                  Применить подключение БД
                 </button>
               </div>
             </form>

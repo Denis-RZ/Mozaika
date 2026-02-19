@@ -3,13 +3,19 @@ using Microsoft.EntityFrameworkCore;
 using Mozaika.Api.Contracts;
 using Mozaika.Api.Database;
 using Mozaika.Api.Database.Entities;
+using Mozaika.Api.Database.Providers;
+using Mozaika.Api.Options;
 using Mozaika.Api.Services;
 
 namespace Mozaika.Api.Controllers;
 
 [ApiController]
 [Route("api/admin")]
-public sealed class AdminController(MozaikaDbContext dbContext) : ControllerBase
+public sealed class AdminController(
+    MozaikaDbContext dbContext,
+    RuntimeDatabaseSettingsStore runtimeDatabaseSettings,
+    IDatabaseProviderRegistry databaseProviderRegistry
+) : ControllerBase
 {
     [HttpGet("settings")]
     public async Task<ActionResult<AdminSettingsReadResponse>> GetSettings()
@@ -72,6 +78,76 @@ public sealed class AdminController(MozaikaDbContext dbContext) : ControllerBase
         await dbContext.SaveChangesAsync();
 
         return Ok(settings.ToRead());
+    }
+
+    [HttpGet("database")]
+    public ActionResult<DatabaseConfigReadResponse> GetDatabaseConfig()
+    {
+        var options = runtimeDatabaseSettings.GetSnapshot();
+        return Ok(BuildDatabaseConfigResponse(options));
+    }
+
+    [HttpPut("database")]
+    public async Task<ActionResult<DatabaseConfigReadResponse>> UpdateDatabaseConfig([FromBody] DatabaseConfigUpdateRequest payload)
+    {
+        var provider = (payload.Provider ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(provider))
+        {
+            return BadRequest(new ApiError("Выберите провайдер базы данных."));
+        }
+
+        if (!databaseProviderRegistry.IsSupported(provider))
+        {
+            var available = string.Join(", ", databaseProviderRegistry.GetSupportedProviderNames());
+            return BadRequest(new ApiError($"Провайдер '{provider}' не поддерживается. Доступно: {available}."));
+        }
+
+        var connectionString = (payload.ConnectionString ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            return BadRequest(new ApiError("Строка подключения обязательна."));
+        }
+
+        var nextOptions = new DatabaseOptions
+        {
+            Provider = provider,
+            ConnectionString = connectionString,
+            Echo = payload.Echo ?? false,
+        };
+
+        try
+        {
+            var optionsBuilder = new DbContextOptionsBuilder<MozaikaDbContext>();
+            databaseProviderRegistry.Configure(optionsBuilder, nextOptions);
+            if (nextOptions.Echo)
+            {
+                optionsBuilder.EnableSensitiveDataLogging();
+            }
+
+            await using var testContext = new MozaikaDbContext(optionsBuilder.Options);
+            var createSchema = payload.CreateSchema ?? true;
+            var seedDefaults = payload.SeedDefaults ?? true;
+
+            if (createSchema)
+            {
+                await DbInitializer.SeedAsync(testContext, seedDefaults);
+            }
+            else
+            {
+                var connected = await testContext.Database.CanConnectAsync();
+                if (!connected)
+                {
+                    return BadRequest(new ApiError("Не удалось подключиться к базе данных."));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new ApiError($"Ошибка подключения к базе данных: {ex.Message}"));
+        }
+
+        runtimeDatabaseSettings.Set(nextOptions);
+        return Ok(BuildDatabaseConfigResponse(nextOptions));
     }
 
     [HttpGet("grout-colors")]
@@ -218,6 +294,14 @@ public sealed class AdminController(MozaikaDbContext dbContext) : ControllerBase
 
         return Ok(entity.ToRead());
     }
+
+    private DatabaseConfigReadResponse BuildDatabaseConfigResponse(DatabaseOptions options) => new()
+    {
+        Provider = options.Provider,
+        ConnectionString = options.ConnectionString,
+        Echo = options.Echo,
+        SupportedProviders = databaseProviderRegistry.GetSupportedProviderNames().ToList(),
+    };
 
     private static (bool IsValid, string? Name, string? RgbHex, bool IsActive, string? Error) ValidateCreatePayload(GroutColorCreateRequest payload)
     {
