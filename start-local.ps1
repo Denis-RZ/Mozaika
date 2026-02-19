@@ -44,6 +44,37 @@ function Stop-PortProcess {
   }
 }
 
+function Stop-DotnetBackendProcess {
+  Param([string]$BackendDir)
+
+  $backendPath = $BackendDir.ToLowerInvariant()
+  $targetIds = New-Object System.Collections.Generic.HashSet[int]
+
+  # AppHost process name when running built executable.
+  $appHost = Get-Process -Name "Mozaika.Api" -ErrorAction SilentlyContinue
+  foreach ($proc in $appHost) {
+    [void]$targetIds.Add($proc.Id)
+  }
+
+  # dotnet-hosted process (dotnet run / dotnet <dll>) with command line pointing to backend-dotnet.
+  $dotnetProcs = Get-CimInstance Win32_Process -Filter "Name='dotnet.exe'" -ErrorAction SilentlyContinue
+  foreach ($proc in $dotnetProcs) {
+    $cmd = ($proc.CommandLine | Out-String).ToLowerInvariant()
+    if ($cmd -and $cmd.Contains($backendPath)) {
+      [void]$targetIds.Add([int]$proc.ProcessId)
+    }
+  }
+
+  foreach ($procId in $targetIds) {
+    try {
+      Stop-Process -Id $procId -Force -ErrorAction Stop
+      Write-Host "Stopped backend process $procId (.NET)"
+    } catch {
+      Write-Host "Failed to stop backend process $procId (.NET)"
+    }
+  }
+}
+
 function Wait-Port {
   Param(
     [int]$Port,
@@ -65,6 +96,7 @@ Write-Host "Project root: $ProjectRoot"
 
 Stop-PortProcess -Port $BackendPort
 Stop-PortProcess -Port $FrontendPort
+Stop-DotnetBackendProcess -BackendDir $backendDir
 
 Write-Host "Restoring backend dependencies..."
 Push-Location $backendDir
