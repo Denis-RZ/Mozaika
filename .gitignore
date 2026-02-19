@@ -48,3 +48,6 @@ tmp_*.png
 .cache/
 .turbo/
 .next/
+**/bin/
+**/obj/
+backend-dotnet/*.log

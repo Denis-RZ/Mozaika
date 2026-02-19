@@ -1,4 +1,4 @@
-version: "3.9"
+﻿version: "3.9"
 
 services:
   db:
@@ -19,13 +19,14 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: ./backend-dotnet
     container_name: mozaika-backend
     restart: unless-stopped
     environment:
-      MOZAIKA_DATABASE_URL: postgresql+psycopg://mozaika:mozaika@db:5432/mozaika
-      MOZAIKA_DATABASE_ECHO: "false"
-      MOZAIKA_MAX_UPLOAD_MB: "25"
+      MOZAIKA__DATABASE__PROVIDER: postgres
+      MOZAIKA__DATABASE__CONNECTIONSTRING: Host=db;Port=5432;Database=mozaika;Username=mozaika;Password=mozaika
+      MOZAIKA__MAXUPLOADMB: "25"
+      MOZAIKA__CORSORIGINS__0: "*"
     depends_on:
       db:
         condition: service_healthy
@@ -42,4 +43,3 @@ services:
 
 volumes:
   mozaika_pgdata:
-

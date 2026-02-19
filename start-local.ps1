@@ -1,4 +1,4 @@
-Param(
+﻿Param(
   [string]$ProjectRoot = "",
   [string]$BackendHost = "127.0.0.1",
   [int]$BackendPort = 8000,
@@ -10,19 +10,19 @@ Param(
 $ErrorActionPreference = "Stop"
 
 if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
-  if (Test-Path (Join-Path $PSScriptRoot "backend")) {
+  if (Test-Path (Join-Path $PSScriptRoot "backend-dotnet")) {
     $ProjectRoot = $PSScriptRoot
   } else {
     $ProjectRoot = "c:\Users\mikedell\Mozaika"
   }
 }
 
-$backendDir = Join-Path $ProjectRoot "backend"
+$backendDir = Join-Path $ProjectRoot "backend-dotnet"
 $frontendDir = Join-Path $ProjectRoot "frontend"
-$venvPython = Join-Path $backendDir ".venv\Scripts\python.exe"
+$dbFile = Join-Path $ProjectRoot "backend\mozaika.local.db"
 
 if (-not (Test-Path $backendDir)) {
-  throw "Backend directory not found: $backendDir"
+  throw "Backend (.NET) directory not found: $backendDir"
 }
 if (-not (Test-Path $frontendDir)) {
   throw "Frontend directory not found: $frontendDir"
@@ -60,43 +60,34 @@ function Wait-Port {
   return $false
 }
 
-Write-Host "Starting Mozaika locally..."
+Write-Host "Starting Mozaika locally (.NET backend)..."
 Write-Host "Project root: $ProjectRoot"
 
 Stop-PortProcess -Port $BackendPort
 Stop-PortProcess -Port $FrontendPort
 
-if (-not (Test-Path $venvPython)) {
-  Write-Host "Creating backend virtualenv..."
-  python -m venv (Join-Path $backendDir ".venv")
-}
+Write-Host "Restoring backend dependencies..."
+Push-Location $backendDir
+& dotnet restore | Out-Null
+Pop-Location
 
-Write-Host "Installing backend dependencies..."
-& $venvPython -m pip install -e "$backendDir[dev]" | Out-Null
-
-$envFilePath = Join-Path $backendDir ".env"
-if (-not (Test-Path $envFilePath)) {
-  @"
-MOZAIKA_APP_NAME=Mozaika API
-MOZAIKA_API_PREFIX=/api
-MOZAIKA_DATABASE_URL=sqlite:///./mozaika.local.db
-MOZAIKA_DATABASE_ECHO=false
-MOZAIKA_MAX_UPLOAD_MB=25
-"@ | Set-Content -Path $envFilePath
-}
+$env:MOZAIKA__DATABASE__PROVIDER = "sqlite"
+$env:MOZAIKA__DATABASE__CONNECTIONSTRING = "Data Source=$dbFile"
+$env:MOZAIKA__MAXUPLOADMB = "25"
+$env:MOZAIKA__CORSORIGINS__0 = "*"
 
 Write-Host "Starting backend on http://$BackendHost`:$BackendPort ..."
 $backendProc = Start-Process `
-  -FilePath $venvPython `
-  -ArgumentList "-m","uvicorn","app.main:app","--host",$BackendHost,"--port",$BackendPort `
+  -FilePath "dotnet" `
+  -ArgumentList "run","--urls","http://$BackendHost`:$BackendPort" `
   -WindowStyle Hidden `
   -WorkingDirectory $backendDir `
   -RedirectStandardOutput (Join-Path $backendDir "backend.out.log") `
   -RedirectStandardError (Join-Path $backendDir "backend.err.log") `
   -PassThru
 
-if (-not (Wait-Port -Port $BackendPort -TimeoutSeconds 30)) {
-  throw "Backend did not start on port $BackendPort. Check backend/backend.err.log"
+if (-not (Wait-Port -Port $BackendPort -TimeoutSeconds 35)) {
+  throw "Backend did not start on port $BackendPort. Check backend-dotnet/backend.err.log"
 }
 
 Write-Host "Installing frontend dependencies..."

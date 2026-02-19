@@ -526,6 +526,9 @@ export default function App() {
   const onImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
     setImageFile(file);
+    // Reset previous result so preview switches to the newly selected source image.
+    setMosaicResult(null);
+    setError(null);
     if (imagePreviewUrl) {
       URL.revokeObjectURL(imagePreviewUrl);
       setImagePreviewUrl(null);

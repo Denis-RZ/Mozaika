@@ -1,10 +1,11 @@
-# Mozaika Production Demo
+﻿# Mozaika Production Demo
 
 Full-stack mosaic generator:
 
-- `backend/`: FastAPI + SQLAlchemy + universal DB provider abstraction.
+- `backend-dotnet/`: ASP.NET Core Web API + EF Core + universal DB provider abstraction.
 - `frontend/`: React + TypeScript UI for studio and admin workflows.
-- `docker-compose.yml`: production-like deployment with PostgreSQL, backend, and nginx-served frontend.
+- `backend/`: legacy FastAPI implementation (kept for reference).
+- `docker-compose.yml`: production-like deployment with PostgreSQL, .NET backend, and nginx-served frontend.
 
 ## Quick Start (Docker)
 
@@ -19,14 +20,12 @@ Open:
 
 ## Local Dev
 
-1. Start backend:
+1. Start backend (.NET):
 
 ```bash
-cd backend
-python -m venv .venv
-.venv\Scripts\activate
-pip install -e .[dev,postgres]
-uvicorn app.main:app --reload
+cd backend-dotnet
+dotnet restore
+dotnet run --urls http://127.0.0.1:8000
 ```
 
 2. Start frontend:
@@ -55,11 +54,12 @@ Stop:
 
 ## Environment
 
-Backend variables (see `backend/.env.example`):
+Backend (.NET) variables:
 
-- `MOZAIKA_DATABASE_URL`
-- `MOZAIKA_DATABASE_ECHO`
-- `MOZAIKA_MAX_UPLOAD_MB`
+- `MOZAIKA__DATABASE__PROVIDER` (`sqlite` | `postgres` | `sqlserver`)
+- `MOZAIKA__DATABASE__CONNECTIONSTRING`
+- `MOZAIKA__MAXUPLOADMB`
+- `MOZAIKA__CORSORIGINS__0` (for array items)
 
 Frontend optional variable:
 
