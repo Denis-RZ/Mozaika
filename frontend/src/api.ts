@@ -4,6 +4,7 @@ import type {
   ColorCreate,
   ColorRead,
   DatabaseConfigRead,
+  DatabaseConfigTestResponse,
   DatabaseConfigUpdate,
   GroutColorCreate,
   GroutColorRead,
@@ -94,6 +95,17 @@ export async function configureDatabase(
     body: JSON.stringify(payload),
   });
   return handleJsonResponse<DatabaseConfigRead>(response);
+}
+
+export async function testDatabaseConnection(
+  payload: DatabaseConfigUpdate,
+): Promise<DatabaseConfigTestResponse> {
+  const response = await fetch(`${API_BASE}/api/admin/database/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleJsonResponse<DatabaseConfigTestResponse>(response);
 }
 
 export async function createGroutColor(payload: GroutColorCreate): Promise<GroutColorRead> {

@@ -55,6 +55,11 @@ export interface DatabaseConfigUpdate {
   seed_defaults?: boolean;
 }
 
+export interface DatabaseConfigTestResponse {
+  success: boolean;
+  message: string;
+}
+
 export interface BootstrapResponse {
   settings: AdminSettingsRead;
   colors: ColorRead[];

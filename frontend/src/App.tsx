@@ -12,6 +12,7 @@ import {
   generateMosaic,
   patchColor,
   patchGroutColor,
+  testDatabaseConnection,
   updateSettings,
 } from "./api";
 import type {
@@ -245,6 +246,289 @@ function parseBulkPaletteRows(raw: string): ColorCreate[] {
   });
 }
 
+interface DbConnectionForm {
+  dataSource: string;
+  host: string;
+  port: string;
+  database: string;
+  username: string;
+  password: string;
+  sslMode: string;
+  encrypt: boolean;
+  trustServerCertificate: boolean;
+  extra: string;
+}
+
+function defaultDbConnectionForm(provider: string): DbConnectionForm {
+  switch (provider) {
+    case "sqlite":
+      return {
+        dataSource: "C:\\Users\\mikedell\\Mozaika\\backend\\mozaika.local.db",
+        host: "",
+        port: "",
+        database: "",
+        username: "",
+        password: "",
+        sslMode: "Require",
+        encrypt: true,
+        trustServerCertificate: true,
+        extra: "",
+      };
+    case "postgres":
+      return {
+        dataSource: "",
+        host: "localhost",
+        port: "5432",
+        database: "mozaika",
+        username: "postgres",
+        password: "postgres",
+        sslMode: "Require",
+        encrypt: true,
+        trustServerCertificate: true,
+        extra: "",
+      };
+    case "mysql":
+      return {
+        dataSource: "",
+        host: "localhost",
+        port: "3306",
+        database: "mozaika",
+        username: "root",
+        password: "",
+        sslMode: "Required",
+        encrypt: true,
+        trustServerCertificate: true,
+        extra: "",
+      };
+    case "sqlserver":
+      return {
+        dataSource: "",
+        host: "localhost",
+        port: "1433",
+        database: "mozaika",
+        username: "sa",
+        password: "",
+        sslMode: "Require",
+        encrypt: true,
+        trustServerCertificate: true,
+        extra: "",
+      };
+    default:
+      return {
+        dataSource: "",
+        host: "",
+        port: "",
+        database: "",
+        username: "",
+        password: "",
+        sslMode: "Require",
+        encrypt: true,
+        trustServerCertificate: true,
+        extra: "",
+      };
+  }
+}
+
+function parseConnectionStringPairs(connectionString: string): Record<string, string> {
+  const pairs: Record<string, string> = {};
+  for (const part of connectionString.split(";")) {
+    const chunk = part.trim();
+    if (chunk.length === 0) {
+      continue;
+    }
+    const index = chunk.indexOf("=");
+    if (index <= 0) {
+      continue;
+    }
+    const key = chunk.slice(0, index).trim().toLowerCase();
+    const value = chunk.slice(index + 1).trim();
+    pairs[key] = value;
+  }
+  return pairs;
+}
+
+function pickPairValue(pairs: Record<string, string>, keys: string[]): string {
+  for (const key of keys) {
+    const value = pairs[key.toLowerCase()];
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return "";
+}
+
+function parseBoolValue(value: string, fallback: boolean): boolean {
+  if (value.length === 0) {
+    return fallback;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1" || normalized === "yes") {
+    return true;
+  }
+  if (normalized === "false" || normalized === "0" || normalized === "no") {
+    return false;
+  }
+  return fallback;
+}
+
+function extractExtraPairs(connectionString: string, knownKeys: string[]): string {
+  const known = new Set(knownKeys.map((key) => key.toLowerCase()));
+  const extras: string[] = [];
+
+  for (const part of connectionString.split(";")) {
+    const chunk = part.trim();
+    if (chunk.length === 0) {
+      continue;
+    }
+    const index = chunk.indexOf("=");
+    if (index <= 0) {
+      continue;
+    }
+    const key = chunk.slice(0, index).trim().toLowerCase();
+    if (!known.has(key)) {
+      extras.push(chunk);
+    }
+  }
+
+  return extras.join(";");
+}
+
+function parseDbConnectionForm(provider: string, connectionString: string): DbConnectionForm {
+  const defaults = defaultDbConnectionForm(provider);
+  const pairs = parseConnectionStringPairs(connectionString);
+
+  if (provider === "sqlite") {
+    return {
+      ...defaults,
+      dataSource: pickPairValue(pairs, ["Data Source", "Filename"]) || defaults.dataSource,
+      extra: extractExtraPairs(connectionString, ["Data Source", "Filename"]),
+    };
+  }
+
+  const next: DbConnectionForm = {
+    ...defaults,
+    host: pickPairValue(pairs, ["Host", "Server", "Data Source"]) || defaults.host,
+    port: pickPairValue(pairs, ["Port"]) || defaults.port,
+    database: pickPairValue(pairs, ["Database", "Initial Catalog"]) || defaults.database,
+    username: pickPairValue(pairs, ["Username", "User", "User Id", "Uid"]) || defaults.username,
+    password: pickPairValue(pairs, ["Password", "Pwd"]) || defaults.password,
+    sslMode: pickPairValue(pairs, ["SSL Mode", "SslMode"]) || defaults.sslMode,
+    encrypt: parseBoolValue(pickPairValue(pairs, ["Encrypt"]), defaults.encrypt),
+    trustServerCertificate: parseBoolValue(
+      pickPairValue(pairs, ["TrustServerCertificate", "Trust Server Certificate"]),
+      defaults.trustServerCertificate,
+    ),
+    extra: "",
+  };
+
+  if (provider === "sqlserver") {
+    const hostRaw = pickPairValue(pairs, ["Server", "Data Source"]);
+    if (hostRaw.startsWith("tcp:")) {
+      const withoutPrefix = hostRaw.slice(4);
+      const splitIndex = withoutPrefix.lastIndexOf(",");
+      if (splitIndex > 0) {
+        next.host = withoutPrefix.slice(0, splitIndex);
+        next.port = withoutPrefix.slice(splitIndex + 1);
+      } else {
+        next.host = withoutPrefix;
+      }
+    }
+  }
+
+  if (provider === "postgres") {
+    next.extra = extractExtraPairs(connectionString, [
+      "Host",
+      "Server",
+      "Data Source",
+      "Port",
+      "Database",
+      "Initial Catalog",
+      "Username",
+      "User",
+      "User Id",
+      "Uid",
+      "Password",
+      "Pwd",
+      "SSL Mode",
+      "SslMode",
+      "TrustServerCertificate",
+      "Trust Server Certificate",
+    ]);
+  } else if (provider === "mysql") {
+    next.extra = extractExtraPairs(connectionString, [
+      "Server",
+      "Host",
+      "Port",
+      "Database",
+      "User",
+      "Username",
+      "User Id",
+      "Uid",
+      "Password",
+      "Pwd",
+      "SslMode",
+      "SSL Mode",
+    ]);
+  } else if (provider === "sqlserver") {
+    next.extra = extractExtraPairs(connectionString, [
+      "Server",
+      "Data Source",
+      "Port",
+      "Database",
+      "Initial Catalog",
+      "User",
+      "Username",
+      "User Id",
+      "Uid",
+      "Password",
+      "Pwd",
+      "Encrypt",
+      "TrustServerCertificate",
+      "Trust Server Certificate",
+    ]);
+  }
+
+  return next;
+}
+
+function withExtra(base: string, extra: string): string {
+  const trimmed = extra.trim();
+  if (trimmed.length === 0) {
+    return base;
+  }
+  const normalized = trimmed.endsWith(";") ? trimmed : `${trimmed};`;
+  return `${base}${normalized}`;
+}
+
+function buildConnectionString(provider: string, form: DbConnectionForm): string {
+  if (provider === "sqlite") {
+    return withExtra(`Data Source=${form.dataSource.trim()};`, form.extra);
+  }
+
+  if (provider === "postgres") {
+    return withExtra(
+      `Host=${form.host.trim()};Port=${form.port.trim()};Database=${form.database.trim()};Username=${form.username.trim()};Password=${form.password};SSL Mode=${form.sslMode.trim()};Trust Server Certificate=${form.trustServerCertificate ? "true" : "false"};`,
+      form.extra,
+    );
+  }
+
+  if (provider === "mysql") {
+    return withExtra(
+      `Server=${form.host.trim()};Port=${form.port.trim()};Database=${form.database.trim()};User=${form.username.trim()};Password=${form.password};SslMode=${form.sslMode.trim()};`,
+      form.extra,
+    );
+  }
+
+  if (provider === "sqlserver") {
+    return withExtra(
+      `Server=tcp:${form.host.trim()},${form.port.trim()};Database=${form.database.trim()};User Id=${form.username.trim()};Password=${form.password};Encrypt=${form.encrypt ? "True" : "False"};TrustServerCertificate=${form.trustServerCertificate ? "True" : "False"};`,
+      form.extra,
+    );
+  }
+
+  return "";
+}
+
 function providerConnectionHint(provider: string): string {
   switch (provider) {
     case "sqlite":
@@ -311,6 +595,9 @@ export default function App() {
     create_schema: true,
     seed_defaults: true,
   });
+  const [dbConnectionForm, setDbConnectionForm] = useState<DbConnectionForm>(
+    defaultDbConnectionForm("sqlite"),
+  );
   const [supportedDbProviders, setSupportedDbProviders] = useState<string[]>([
     "sqlite",
     "postgres",
@@ -350,6 +637,10 @@ export default function App() {
 
   const maxOffsetX = Math.max(0, studioForm.fieldWidthMm - gridEstimate.mosaicWidth);
   const maxOffsetY = Math.max(0, studioForm.fieldHeightMm - gridEstimate.mosaicHeight);
+  const composedConnectionString = useMemo(
+    () => buildConnectionString(dbDraft.provider, dbConnectionForm),
+    [dbDraft.provider, dbConnectionForm],
+  );
 
   const refreshBootstrap = useCallback(async () => {
     setLoadingBootstrap(true);
@@ -370,6 +661,7 @@ export default function App() {
         connection_string: dbConfig.connection_string,
         echo: dbConfig.echo,
       }));
+      setDbConnectionForm(parseDbConnectionForm(dbConfig.provider, dbConfig.connection_string));
       if (dbConfig.supported_providers.length > 0) {
         setSupportedDbProviders(dbConfig.supported_providers);
       }
@@ -439,8 +731,33 @@ export default function App() {
     };
   }, [imagePreviewUrl]);
 
+  useEffect(() => {
+    setDbDraft((current) => ({
+      ...current,
+      connection_string: composedConnectionString,
+    }));
+  }, [composedConnectionString]);
+
   const setStudioField = <K extends keyof StudioFormState>(field: K, value: StudioFormState[K]) => {
     setStudioForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const onDbProviderChange = (provider: string) => {
+    const nextProvider = provider.trim().toLowerCase();
+    const defaults = defaultDbConnectionForm(nextProvider);
+    setDbConnectionForm(defaults);
+    setDbDraft((current) => ({
+      ...current,
+      provider: nextProvider,
+      connection_string: buildConnectionString(nextProvider, defaults),
+    }));
+  };
+
+  const setDbConnectionField = <K extends keyof DbConnectionForm>(
+    field: K,
+    value: DbConnectionForm[K],
+  ) => {
+    setDbConnectionForm((current) => ({ ...current, [field]: value }));
   };
 
   const onTabClick = (tab: TabKey) => {
@@ -713,10 +1030,16 @@ export default function App() {
     setBusy(true);
     setError(null);
     setNotice(null);
+    const connectionString = composedConnectionString.trim();
+    if (connectionString.length === 0) {
+      setBusy(false);
+      setError("Заполните параметры подключения к базе данных.");
+      return;
+    }
     try {
       const payload = await configureDatabase({
         provider: dbDraft.provider.trim().toLowerCase(),
-        connection_string: dbDraft.connection_string.trim(),
+        connection_string: connectionString,
         echo: Boolean(dbDraft.echo),
         create_schema: Boolean(dbDraft.create_schema),
         seed_defaults: Boolean(dbDraft.seed_defaults),
@@ -727,6 +1050,7 @@ export default function App() {
         connection_string: payload.connection_string,
         echo: payload.echo,
       }));
+      setDbConnectionForm(parseDbConnectionForm(payload.provider, payload.connection_string));
       if (payload.supported_providers.length > 0) {
         setSupportedDbProviders(payload.supported_providers);
       }
@@ -737,6 +1061,36 @@ export default function App() {
         requestError instanceof Error
           ? requestError.message
           : "Не удалось применить подключение к базе данных.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onTestDatabaseConfig = async () => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const connectionString = composedConnectionString.trim();
+    if (connectionString.length === 0) {
+      setBusy(false);
+      setError("Заполните параметры подключения к базе данных.");
+      return;
+    }
+    try {
+      const payload = await testDatabaseConnection({
+        provider: dbDraft.provider.trim().toLowerCase(),
+        connection_string: connectionString,
+        echo: Boolean(dbDraft.echo),
+        create_schema: false,
+        seed_defaults: false,
+      });
+      setNotice(payload.message);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Не удалось проверить подключение к базе данных.",
       );
     } finally {
       setBusy(false);
@@ -1423,12 +1777,7 @@ export default function App() {
                 />
                 <select
                   value={dbDraft.provider}
-                  onChange={(event) =>
-                    setDbDraft((current) => ({
-                      ...current,
-                      provider: event.target.value,
-                    }))
-                  }
+                  onChange={(event) => onDbProviderChange(event.target.value)}
                 >
                   {supportedDbProviders.map((provider) => (
                     <option key={provider} value={provider}>
@@ -1437,6 +1786,105 @@ export default function App() {
                   ))}
                 </select>
               </label>
+              {dbDraft.provider === "sqlite" ? (
+                <label>
+                  <LabelTitle
+                    text="Файл базы данных"
+                    hint="Путь к sqlite-файлу на сервере, например C:\\folder\\mozaika.db."
+                  />
+                  <input
+                    type="text"
+                    value={dbConnectionForm.dataSource}
+                    onChange={(event) => setDbConnectionField("dataSource", event.target.value)}
+                  />
+                </label>
+              ) : (
+                <>
+                  <label>
+                    <LabelTitle text="Хост" hint="Домен или IP сервера БД." />
+                    <input
+                      type="text"
+                      value={dbConnectionForm.host}
+                      onChange={(event) => setDbConnectionField("host", event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    <LabelTitle text="Порт" hint="Порт БД: PostgreSQL 5432, MySQL 3306, SQL Server 1433." />
+                    <input
+                      type="text"
+                      value={dbConnectionForm.port}
+                      onChange={(event) => setDbConnectionField("port", event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    <LabelTitle text="Имя базы" hint="Название базы данных на сервере." />
+                    <input
+                      type="text"
+                      value={dbConnectionForm.database}
+                      onChange={(event) => setDbConnectionField("database", event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    <LabelTitle text="Пользователь" hint="Логин пользователя БД." />
+                    <input
+                      type="text"
+                      value={dbConnectionForm.username}
+                      onChange={(event) => setDbConnectionField("username", event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    <LabelTitle text="Пароль" hint="Пароль пользователя БД." />
+                    <input
+                      type="password"
+                      value={dbConnectionForm.password}
+                      onChange={(event) => setDbConnectionField("password", event.target.value)}
+                    />
+                  </label>
+                  {(dbDraft.provider === "postgres" || dbDraft.provider === "mysql") && (
+                    <label>
+                      <LabelTitle text="SSL mode" hint="Режим SSL: Require/Prefer/Disable (зависит от хостинга)." />
+                      <input
+                        type="text"
+                        value={dbConnectionForm.sslMode}
+                        onChange={(event) => setDbConnectionField("sslMode", event.target.value)}
+                      />
+                    </label>
+                  )}
+                  {(dbDraft.provider === "postgres" || dbDraft.provider === "sqlserver") && (
+                    <label className="checkbox">
+                      <input
+                        type="checkbox"
+                        checked={dbConnectionForm.trustServerCertificate}
+                        onChange={(event) =>
+                          setDbConnectionField("trustServerCertificate", event.target.checked)
+                        }
+                      />
+                      Trust server certificate
+                    </label>
+                  )}
+                  {dbDraft.provider === "sqlserver" && (
+                    <label className="checkbox">
+                      <input
+                        type="checkbox"
+                        checked={dbConnectionForm.encrypt}
+                        onChange={(event) => setDbConnectionField("encrypt", event.target.checked)}
+                      />
+                      Encrypt соединение
+                    </label>
+                  )}
+                </>
+              )}
+              <label>
+                <LabelTitle
+                  text="Доп. параметры"
+                  hint="Дополнительные пары вида Key=Value;Key2=Value2. Добавятся в конец строки."
+                />
+                <textarea
+                  rows={2}
+                  value={dbConnectionForm.extra}
+                  onChange={(event) => setDbConnectionField("extra", event.target.value)}
+                />
+              </label>
               <label>
                 <LabelTitle
                   text="Строка подключения"
@@ -1444,14 +1892,8 @@ export default function App() {
                 />
                 <textarea
                   rows={3}
-                  value={dbDraft.connection_string}
-                  onChange={(event) =>
-                    setDbDraft((current) => ({
-                      ...current,
-                      connection_string: event.target.value,
-                    }))
-                  }
-                  required
+                  value={composedConnectionString}
+                  readOnly
                 />
               </label>
               <p className="muted">{providerConnectionHint(dbDraft.provider)}</p>
@@ -1496,6 +1938,9 @@ export default function App() {
                 Заполнить базовые данные (настройки и цвета шва)
               </label>
               <div className="actions">
+                <button type="button" className="button-ghost" disabled={busy} onClick={onTestDatabaseConfig}>
+                  Проверить подключение
+                </button>
                 <button type="submit" className="button-secondary" disabled={busy}>
                   Применить подключение БД
                 </button>

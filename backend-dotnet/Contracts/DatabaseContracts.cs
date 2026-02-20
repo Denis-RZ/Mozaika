@@ -16,3 +16,9 @@ public sealed class DatabaseConfigUpdateRequest
     public bool? CreateSchema { get; set; }
     public bool? SeedDefaults { get; set; }
 }
+
+public sealed class DatabaseConfigTestResponse
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty;
+}

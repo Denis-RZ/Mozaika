@@ -90,56 +90,19 @@ public sealed class AdminController(
     [HttpPut("database")]
     public async Task<ActionResult<DatabaseConfigReadResponse>> UpdateDatabaseConfig([FromBody] DatabaseConfigUpdateRequest payload)
     {
-        var provider = (payload.Provider ?? string.Empty).Trim().ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(provider))
+        var parsed = ParseDatabasePayload(payload);
+        if (!parsed.IsValid)
         {
-            return BadRequest(new ApiError("Выберите провайдер базы данных."));
+            return BadRequest(new ApiError(parsed.Error!));
         }
 
-        if (!databaseProviderRegistry.IsSupported(provider))
-        {
-            var available = string.Join(", ", databaseProviderRegistry.GetSupportedProviderNames());
-            return BadRequest(new ApiError($"Провайдер '{provider}' не поддерживается. Доступно: {available}."));
-        }
-
-        var connectionString = (payload.ConnectionString ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            return BadRequest(new ApiError("Строка подключения обязательна."));
-        }
-
-        var nextOptions = new DatabaseOptions
-        {
-            Provider = provider,
-            ConnectionString = connectionString,
-            Echo = payload.Echo ?? false,
-        };
+        var nextOptions = parsed.Options!;
+        var createSchema = payload.CreateSchema ?? true;
+        var seedDefaults = payload.SeedDefaults ?? true;
 
         try
         {
-            var optionsBuilder = new DbContextOptionsBuilder<MozaikaDbContext>();
-            databaseProviderRegistry.Configure(optionsBuilder, nextOptions);
-            if (nextOptions.Echo)
-            {
-                optionsBuilder.EnableSensitiveDataLogging();
-            }
-
-            await using var testContext = new MozaikaDbContext(optionsBuilder.Options);
-            var createSchema = payload.CreateSchema ?? true;
-            var seedDefaults = payload.SeedDefaults ?? true;
-
-            if (createSchema)
-            {
-                await DbInitializer.SeedAsync(testContext, seedDefaults);
-            }
-            else
-            {
-                var connected = await testContext.Database.CanConnectAsync();
-                if (!connected)
-                {
-                    return BadRequest(new ApiError("Не удалось подключиться к базе данных."));
-                }
-            }
+            await VerifyDatabaseConnectionAsync(nextOptions, createSchema, seedDefaults);
         }
         catch (Exception ex)
         {
@@ -148,6 +111,86 @@ public sealed class AdminController(
 
         runtimeDatabaseSettings.Set(nextOptions);
         return Ok(BuildDatabaseConfigResponse(nextOptions));
+    }
+
+    [HttpPost("database/test")]
+    public async Task<ActionResult<DatabaseConfigTestResponse>> TestDatabaseConfig([FromBody] DatabaseConfigUpdateRequest payload)
+    {
+        var parsed = ParseDatabasePayload(payload);
+        if (!parsed.IsValid)
+        {
+            return BadRequest(new ApiError(parsed.Error!));
+        }
+
+        var nextOptions = parsed.Options!;
+        var createSchema = payload.CreateSchema ?? false;
+        var seedDefaults = payload.SeedDefaults ?? false;
+
+        try
+        {
+            await VerifyDatabaseConnectionAsync(nextOptions, createSchema, seedDefaults);
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new ApiError($"Ошибка подключения к базе данных: {ex.Message}"));
+        }
+
+        return Ok(new DatabaseConfigTestResponse
+        {
+            Success = true,
+            Message = "Подключение успешно. Параметры корректны.",
+        });
+    }
+
+    private async Task VerifyDatabaseConnectionAsync(DatabaseOptions options, bool createSchema, bool seedDefaults)
+    {
+        var optionsBuilder = new DbContextOptionsBuilder<MozaikaDbContext>();
+        databaseProviderRegistry.Configure(optionsBuilder, options);
+        if (options.Echo)
+        {
+            optionsBuilder.EnableSensitiveDataLogging();
+        }
+
+        await using var testContext = new MozaikaDbContext(optionsBuilder.Options);
+        if (createSchema)
+        {
+            await DbInitializer.SeedAsync(testContext, seedDefaults);
+            return;
+        }
+
+        var connected = await testContext.Database.CanConnectAsync();
+        if (!connected)
+        {
+            throw new InvalidOperationException("Не удалось подключиться к базе данных.");
+        }
+    }
+
+    private (bool IsValid, DatabaseOptions? Options, string? Error) ParseDatabasePayload(DatabaseConfigUpdateRequest payload)
+    {
+        var provider = (payload.Provider ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(provider))
+        {
+            return (false, null, "Выберите провайдер базы данных.");
+        }
+
+        if (!databaseProviderRegistry.IsSupported(provider))
+        {
+            var available = string.Join(", ", databaseProviderRegistry.GetSupportedProviderNames());
+            return (false, null, $"Провайдер '{provider}' не поддерживается. Доступно: {available}.");
+        }
+
+        var connectionString = (payload.ConnectionString ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            return (false, null, "Строка подключения обязательна.");
+        }
+
+        return (true, new DatabaseOptions
+        {
+            Provider = provider,
+            ConnectionString = connectionString,
+            Echo = payload.Echo ?? false,
+        }, null);
     }
 
     [HttpGet("grout-colors")]
