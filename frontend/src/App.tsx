@@ -1,21 +1,42 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  activateProjectGeneration,
   configureDatabase,
   createColor,
   createColorsBulk,
+  createProjectOrder,
+  createProject,
+  createProjectShare,
   createGroutColor,
   deactivateColor,
   deactivateGroutColor,
+  fetchAuthSession,
   fetchBootstrap,
   fetchDatabaseConfig,
+  listProjectOrders,
+  listProjectShares,
+  login,
+  logout,
+  fetchProject,
+  fetchProjectGeneration,
+  fetchProjects,
+  exportMosaic,
   generateMosaic,
   patchColor,
   patchGroutColor,
+  replaceMosaicColor,
+  resolveProjectShare,
+  revokeProjectShare,
+  saveProjectGeneration,
+  setApiAuthToken,
   testDatabaseConnection,
+  updateProjectOrderStatus,
+  updateProject,
   updateSettings,
 } from "./api";
 import type {
+  AuthSessionRead,
   BootstrapResponse,
   ColorCreate,
   ColorRead,
@@ -23,16 +44,34 @@ import type {
   GroutColorCreate,
   GroutColorRead,
   MosaicGenerateResponse,
+  ProjectGenerationRead,
+  ProjectListItem,
+  ProjectOrderCreateRequest,
+  ProjectOrderRead,
+  ProjectOrderStatus,
+  ProjectRead,
+  ProjectSaveGenerationRequest,
+  ProjectShareRead,
   StudioFormState,
   TabKey,
+  UserRole,
 } from "./types";
 
-const DEFAULT_MAX_COLORS = 3;
+const DEFAULT_MAX_COLORS = 0;
 
 const tabs: Array<{ key: TabKey; label: string }> = [
   { key: "studio", label: "Генерация" },
+  { key: "projects", label: "Проекты" },
   { key: "palette", label: "Палитра" },
   { key: "settings", label: "Настройки" },
+];
+
+const ORDER_STATUS_OPTIONS: Array<{ value: ProjectOrderStatus; label: string }> = [
+  { value: "submitted", label: "Новый" },
+  { value: "in_review", label: "На согласовании" },
+  { value: "approved", label: "Подтвержден" },
+  { value: "rejected", label: "Отклонен" },
+  { value: "cancelled", label: "Отменен" },
 ];
 
 function FieldHint({ text }: { text: string }) {
@@ -189,17 +228,17 @@ function suggestColorMeta(hexValue: string): { name: string; ralCode: string } |
         : "";
 
   const ralMap: Record<string, string> = {
-    Белый: "RAL 9016",
-    Черный: "RAL 9005",
-    Серый: "RAL 7040",
-    Красный: "RAL 3020",
-    Оранжевый: "RAL 2004",
-    Желтый: "RAL 1023",
-    Зеленый: "RAL 6018",
-    Бирюзовый: "RAL 5018",
-    Синий: "RAL 5015",
-    Фиолетовый: "RAL 4008",
-    Розовый: "RAL 4010",
+    "Белый": "RAL 9016",
+    "Черный": "RAL 9005",
+    "Серый": "RAL 7040",
+    "Красный": "RAL 3020",
+    "Оранжевый": "RAL 2004",
+    "Желтый": "RAL 1023",
+    "Зеленый": "RAL 6018",
+    "Бирюзовый": "RAL 5018",
+    "Синий": "RAL 5015",
+    "Фиолетовый": "RAL 4008",
+    "Розовый": "RAL 4010",
   };
 
   return {
@@ -213,14 +252,37 @@ function computeMosaicSize(fieldWidth: number, fieldHeight: number, cellSize: nu
   if (pitch <= 0) {
     return { rows: 0, columns: 0, mosaicWidth: 0, mosaicHeight: 0 };
   }
-  const columns = Math.floor((fieldWidth + gap) / pitch);
-  const rows = Math.floor((fieldHeight + gap) / pitch);
+  const columns = Math.ceil((fieldWidth + gap) / pitch);
+  const rows = Math.ceil((fieldHeight + gap) / pitch);
   if (rows <= 0 || columns <= 0) {
     return { rows: 0, columns: 0, mosaicWidth: 0, mosaicHeight: 0 };
   }
   const mosaicWidth = columns * cellSize + (columns - 1) * gap;
   const mosaicHeight = rows * cellSize + (rows - 1) * gap;
   return { rows, columns, mosaicWidth, mosaicHeight };
+}
+
+function computeOffsetGuides(fieldWidth: number, fieldHeight: number, cellSize: number, gap: number) {
+  const size = computeMosaicSize(fieldWidth, fieldHeight, cellSize, gap);
+  const overflowX = Math.max(0, size.mosaicWidth - fieldWidth);
+  const overflowY = Math.max(0, size.mosaicHeight - fieldHeight);
+  const pitchMm = Math.max(0.1, cellSize + gap);
+
+  return {
+    overflowX,
+    overflowY,
+    left: 0,
+    right: -overflowX,
+    top: 0,
+    bottom: -overflowY,
+    centerX: -overflowX / 2,
+    centerY: -overflowY / 2,
+    pitchMm,
+  };
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function parseBulkPaletteRows(raw: string): ColorCreate[] {
@@ -263,7 +325,7 @@ function defaultDbConnectionForm(provider: string): DbConnectionForm {
   switch (provider) {
     case "sqlite":
       return {
-        dataSource: "C:\\Users\\mikedell\\Mozaika\\backend\\mozaika.local.db",
+        dataSource: "C:\\Users\\mikedell\\Mozaika\\data\\mozaika.local.db",
         host: "",
         port: "",
         database: "",
@@ -532,7 +594,7 @@ function buildConnectionString(provider: string, form: DbConnectionForm): string
 function providerConnectionHint(provider: string): string {
   switch (provider) {
     case "sqlite":
-      return "Пример SQLite: Data Source=C:\\\\Users\\\\mikedell\\\\Mozaika\\\\backend\\\\mozaika.local.db";
+      return "Пример SQLite: Data Source=C:\\\\Users\\\\mikedell\\\\Mozaika\\\\data\\\\mozaika.local.db";
     case "postgres":
       return "Пример PostgreSQL: Host=localhost;Port=5432;Database=mozaika;Username=postgres;Password=postgres";
     case "sqlserver":
@@ -544,6 +606,104 @@ function providerConnectionHint(provider: string): string {
   }
 }
 
+function formatDateTime(value: string | null): string {
+  if (!value) {
+    return "-";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString();
+}
+
+function formatMoney(value: number, currency: string): string {
+  const normalizedCurrency = currency.trim().toUpperCase();
+  try {
+    return new Intl.NumberFormat("ru-RU", {
+      style: "currency",
+      currency: normalizedCurrency,
+      maximumFractionDigits: 2,
+    }).format(value);
+  } catch {
+    return `${value.toFixed(2)} ${normalizedCurrency}`;
+  }
+}
+
+function roleLabel(role: UserRole | null): string {
+  if (role === "admin") {
+    return "Админ";
+  }
+  if (role === "customer") {
+    return "Заказчик";
+  }
+  if (role === "viewer") {
+    return "Просмотр";
+  }
+  return "Гость";
+}
+
+function orderStatusLabel(status: ProjectOrderStatus): string {
+  const found = ORDER_STATUS_OPTIONS.find((item) => item.value === status);
+  return found?.label ?? status;
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Не удалось прочитать исходное изображение."));
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error("Не удалось прочитать исходное изображение."));
+        return;
+      }
+      const commaIndex = reader.result.indexOf(",");
+      if (commaIndex < 0) {
+        resolve(reader.result);
+        return;
+      }
+      resolve(reader.result.slice(commaIndex + 1));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function normalizeMosaicResult(response: MosaicGenerateResponse): MosaicGenerateResponse {
+  const fallbackTotalChips = response.rows * response.columns;
+  const totalChips =
+    typeof response.total_chips === "number" && Number.isFinite(response.total_chips)
+      ? response.total_chips
+      : fallbackTotalChips;
+
+  const fallbackPrice = {
+    currency: "RUB",
+    total_chips: totalChips,
+    area_sq_m: Number(((response.field_width_mm * response.field_height_mm) / 1_000_000).toFixed(4)),
+    setup_price: 0,
+    chips_price: 0,
+    colors_price: 0,
+    complexity_price: 0,
+    grout_price: 0,
+    subtotal_price: 0,
+    min_order_price: 0,
+    min_order_applied: false,
+    total_price: 0,
+  };
+
+  const price = response.price ? { ...fallbackPrice, ...response.price } : fallbackPrice;
+  return {
+    ...response,
+    total_chips: totalChips,
+    price: {
+      ...price,
+      total_chips:
+        typeof price.total_chips === "number" && Number.isFinite(price.total_chips)
+          ? price.total_chips
+          : totalChips,
+    },
+  };
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabKey>("studio");
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
@@ -551,10 +711,70 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [authToken, setAuthToken] = useState<string | null>(() => {
+    const stored = localStorage.getItem("mozaika_auth_token");
+    return stored && stored.trim().length > 0 ? stored.trim() : null;
+  });
+  const [authSession, setAuthSession] = useState<AuthSessionRead>({
+    is_authenticated: false,
+    expires_at: null,
+    user: null,
+  });
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authInitialized, setAuthInitialized] = useState(false);
+  const [loginUsername, setLoginUsername] = useState("customer");
+  const [loginPassword, setLoginPassword] = useState("customer123");
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [mosaicResult, setMosaicResult] = useState<MosaicGenerateResponse | null>(null);
+  const [previewZoom, setPreviewZoom] = useState(1);
+  const [previewPan, setPreviewPan] = useState({ x: 0, y: 0 });
+  const [positionStepMm, setPositionStepMm] = useState(12);
+  const [previewPanStepPx, setPreviewPanStepPx] = useState(24);
+  const [previewZoomStep, setPreviewZoomStep] = useState(0.2);
+  const [previewDragging, setPreviewDragging] = useState(false);
+  const previewDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
+  const [replaceFromColorId, setReplaceFromColorId] = useState<number | null>(null);
+  const [replaceToColorId, setReplaceToColorId] = useState<number | null>(null);
+  const [exportDpi, setExportDpi] = useState(200);
+  const [exportMirrorHorizontal, setExportMirrorHorizontal] = useState(false);
+  const [exportIncludeLegend, setExportIncludeLegend] = useState(true);
+  const [moduleChipColumns, setModuleChipColumns] = useState(32);
+  const [moduleChipRows, setModuleChipRows] = useState(32);
+  const [moduleStartNumber, setModuleStartNumber] = useState(1);
+  const [exportIncludeColorNumbers, setExportIncludeColorNumbers] = useState(true);
+  const [projects, setProjects] = useState<ProjectListItem[]>([]);
+  const [loadingProjects, setLoadingProjects] = useState(false);
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [selectedProject, setSelectedProject] = useState<ProjectRead | null>(null);
+  const [projectNameDraft, setProjectNameDraft] = useState("");
+  const [projectDescriptionDraft, setProjectDescriptionDraft] = useState("");
+  const [generationNameDraft, setGenerationNameDraft] = useState("");
+  const [generationNoteDraft, setGenerationNoteDraft] = useState("");
+  const [projectShares, setProjectShares] = useState<ProjectShareRead[]>([]);
+  const [projectOrders, setProjectOrders] = useState<ProjectOrderRead[]>([]);
+  const [shareExpiresInDays, setShareExpiresInDays] = useState(14);
+  const [shareGenerationId, setShareGenerationId] = useState<number | null>(null);
+  const [orderForm, setOrderForm] = useState<ProjectOrderCreateRequest>({
+    generation_id: null,
+    customer_name: "",
+    customer_email: "",
+    customer_phone: "",
+    comment: "",
+  });
+  const [orderStatusDraftByOrder, setOrderStatusDraftByOrder] = useState<Record<number, ProjectOrderStatus>>(
+    {},
+  );
+  const [orderStatusCommentByOrder, setOrderStatusCommentByOrder] = useState<Record<number, string>>(
+    {},
+  );
 
   const [studioForm, setStudioForm] = useState<StudioFormState>({
     fieldWidthMm: 1200,
@@ -590,7 +810,7 @@ export default function App() {
   });
   const [dbDraft, setDbDraft] = useState<DatabaseConfigUpdate>({
     provider: "sqlite",
-    connection_string: "Data Source=C:\\Users\\mikedell\\Mozaika\\backend\\mozaika.local.db",
+    connection_string: "Data Source=C:\\Users\\mikedell\\Mozaika\\data\\mozaika.local.db",
     echo: false,
     create_schema: true,
     seed_defaults: true,
@@ -623,6 +843,19 @@ export default function App() {
     () => (bootstrap?.grout_colors ?? []).filter((color) => color.is_active),
     [bootstrap?.grout_colors],
   );
+  const currentRole = authSession.user?.role ?? null;
+  const isAuthenticated = authSession.is_authenticated && authSession.user !== null;
+  const isAdmin = currentRole === "admin";
+  const canEditProjects = currentRole === "admin" || currentRole === "customer";
+  const canUseStudio = canEditProjects;
+  const visibleTabs = useMemo(() => {
+    return tabs.filter((item) => {
+      if (item.key === "palette" || item.key === "settings") {
+        return isAdmin;
+      }
+      return true;
+    });
+  }, [isAdmin]);
 
   const gridEstimate = useMemo(
     () =>
@@ -634,20 +867,53 @@ export default function App() {
       ),
     [studioForm.fieldWidthMm, studioForm.fieldHeightMm, studioForm.cellSizeMm, studioForm.gapMm],
   );
+  const offsetGuides = useMemo(
+    () =>
+      computeOffsetGuides(
+        studioForm.fieldWidthMm,
+        studioForm.fieldHeightMm,
+        studioForm.cellSizeMm,
+        studioForm.gapMm,
+      ),
+    [studioForm.fieldWidthMm, studioForm.fieldHeightMm, studioForm.cellSizeMm, studioForm.gapMm],
+  );
+  const moduleEstimate = useMemo(() => {
+    if (!mosaicResult) {
+      return null;
+    }
 
-  const maxOffsetX = Math.max(0, studioForm.fieldWidthMm - gridEstimate.mosaicWidth);
-  const maxOffsetY = Math.max(0, studioForm.fieldHeightMm - gridEstimate.mosaicHeight);
+    const columns = Math.max(1, Math.floor(moduleChipColumns));
+    const rows = Math.max(1, Math.floor(moduleChipRows));
+    const modulesX = Math.ceil(mosaicResult.columns / columns);
+    const modulesY = Math.ceil(mosaicResult.rows / rows);
+    const modulesTotal = modulesX * modulesY;
+    const pagesTotal = 1 + modulesTotal + (exportIncludeLegend ? 1 : 0);
+    return {
+      modulesX,
+      modulesY,
+      modulesTotal,
+      pagesTotal,
+      chipColumns: columns,
+      chipRows: rows,
+    };
+  }, [mosaicResult, moduleChipColumns, moduleChipRows, exportIncludeLegend]);
+
   const composedConnectionString = useMemo(
     () => buildConnectionString(dbDraft.provider, dbConnectionForm),
     [dbDraft.provider, dbConnectionForm],
   );
+  const previewSource = mosaicResult
+    ? `data:image/png;base64,${mosaicResult.preview_png_base64}`
+    : imagePreviewUrl;
+  const previewAlt = mosaicResult
+    ? "Mosaic preview"
+    : "Source image preview";
 
   const refreshBootstrap = useCallback(async () => {
     setLoadingBootstrap(true);
     setError(null);
     try {
       const payload = await fetchBootstrap();
-      const dbConfig = await fetchDatabaseConfig();
       setBootstrap(payload);
       setSettingsDraft({
         default_field_width_mm: payload.settings.default_field_width_mm,
@@ -655,15 +921,19 @@ export default function App() {
         default_cell_size_mm: payload.settings.default_cell_size_mm,
         default_gap_mm: payload.settings.default_gap_mm,
       });
-      setDbDraft((current) => ({
-        ...current,
-        provider: dbConfig.provider,
-        connection_string: dbConfig.connection_string,
-        echo: dbConfig.echo,
-      }));
-      setDbConnectionForm(parseDbConnectionForm(dbConfig.provider, dbConfig.connection_string));
-      if (dbConfig.supported_providers.length > 0) {
-        setSupportedDbProviders(dbConfig.supported_providers);
+
+      if (isAdmin) {
+        const dbConfig = await fetchDatabaseConfig();
+        setDbDraft((current) => ({
+          ...current,
+          provider: dbConfig.provider,
+          connection_string: dbConfig.connection_string,
+          echo: dbConfig.echo,
+        }));
+        setDbConnectionForm(parseDbConnectionForm(dbConfig.provider, dbConfig.connection_string));
+        if (dbConfig.supported_providers.length > 0) {
+          setSupportedDbProviders(dbConfig.supported_providers);
+        }
       }
 
       const firstActiveGrout = payload.grout_colors.find((color) => color.is_active) ?? null;
@@ -671,7 +941,7 @@ export default function App() {
         1,
         payload.colors.filter((color) => color.is_active).length,
       );
-      const defaultMax = Math.min(DEFAULT_MAX_COLORS, activeColorCount);
+      const defaultMax = DEFAULT_MAX_COLORS > 0 ? Math.min(DEFAULT_MAX_COLORS, activeColorCount) : activeColorCount;
       setStudioForm((current) => ({
         ...current,
         maxColors:
@@ -685,11 +955,186 @@ export default function App() {
     } finally {
       setLoadingBootstrap(false);
     }
+  }, [isAdmin]);
+
+  const refreshProjects = useCallback(async () => {
+    if (!isAuthenticated) {
+      setProjects([]);
+      setSelectedProjectId(null);
+      setSelectedProject(null);
+      setProjectShares([]);
+      setProjectOrders([]);
+      return;
+    }
+
+    setLoadingProjects(true);
+    try {
+      const payload = await fetchProjects();
+      setProjects(payload);
+      setSelectedProjectId((current) => {
+        if (current !== null && payload.some((item) => item.id === current)) {
+          return current;
+        }
+        return payload[0]?.id ?? null;
+      });
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Не удалось загрузить список проектов.",
+      );
+    } finally {
+      setLoadingProjects(false);
+    }
+  }, [isAuthenticated]);
+
+  const refreshProjectWorkflow = useCallback(
+    async (projectId: number) => {
+      if (!isAuthenticated) {
+        setProjectShares([]);
+        setProjectOrders([]);
+        return;
+      }
+
+      const [shares, orders] = await Promise.all([
+        listProjectShares(projectId),
+        listProjectOrders(projectId),
+      ]);
+      setProjectShares(shares);
+      setProjectOrders(orders);
+      setOrderStatusDraftByOrder(() => {
+        const next: Record<number, ProjectOrderStatus> = {};
+        for (const order of orders) {
+          next[order.id] = order.status;
+        }
+        return next;
+      });
+      setOrderStatusCommentByOrder(() => {
+        const next: Record<number, string> = {};
+        for (const order of orders) {
+          next[order.id] = order.status_comment ?? "";
+        }
+        return next;
+      });
+    },
+    [isAuthenticated],
+  );
+
+  const refreshAuthState = useCallback(async () => {
+    try {
+      const session = await fetchAuthSession();
+      setAuthSession(session);
+      if (!session.is_authenticated) {
+        setAuthToken(null);
+      }
+    } catch {
+      setAuthSession({
+        is_authenticated: false,
+        expires_at: null,
+        user: null,
+      });
+      setAuthToken(null);
+    } finally {
+      setAuthInitialized(true);
+    }
   }, []);
+
+  useEffect(() => {
+    setApiAuthToken(authToken);
+    if (authToken) {
+      localStorage.setItem("mozaika_auth_token", authToken);
+    } else {
+      localStorage.removeItem("mozaika_auth_token");
+    }
+    void refreshAuthState();
+  }, [authToken, refreshAuthState]);
 
   useEffect(() => {
     void refreshBootstrap();
   }, [refreshBootstrap]);
+
+  useEffect(() => {
+    void refreshProjects();
+  }, [refreshProjects, isAuthenticated]);
+
+  useEffect(() => {
+    if (isAdmin) {
+      return;
+    }
+
+    if (activeTab === "palette" || activeTab === "settings") {
+      setActiveTab("studio");
+    }
+  }, [activeTab, isAdmin]);
+
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get("share");
+    if (!token) {
+      return;
+    }
+
+    let cancelled = false;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    void resolveProjectShare(token)
+      .then((payload) => {
+        if (cancelled) {
+          return;
+        }
+
+        const project: ProjectRead = {
+          id: payload.project_id,
+          name: payload.project_name,
+          description: payload.project_description,
+          source_image_mime_type: payload.source_image_mime_type,
+          source_image_base64: payload.source_image_base64,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          generations_count: 1,
+          active_generation_id: payload.generation.id,
+          last_generation_at: payload.generation.created_at,
+          active_generation: payload.generation,
+          generations: [
+            {
+              id: payload.generation.id,
+              version: payload.generation.version,
+              name: payload.generation.name,
+              note: payload.generation.note,
+              created_at: payload.generation.created_at,
+            },
+          ],
+        };
+
+        setSelectedProject(project);
+        setSelectedProjectId(project.id);
+        setProjectNameDraft(project.name);
+        setProjectDescriptionDraft(project.description);
+        applyProjectGeneration(payload.generation, project);
+        setActiveTab("studio");
+        setNotice(`Открыта shared-ссылка проекта: ${project.name}.`);
+      })
+      .catch((requestError) => {
+        if (cancelled) {
+          return;
+        }
+
+        setError(
+          requestError instanceof Error
+            ? requestError.message
+            : "Не удалось открыть shared-ссылку.",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setBusy(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (activePalette.length === 0) {
@@ -698,7 +1143,8 @@ export default function App() {
     const activeIds = new Set(activePalette.map((color) => color.id));
     setIncludeColorIds((items) => items.filter((id) => activeIds.has(id)));
     setExcludeColorIds((items) => items.filter((id) => activeIds.has(id)));
-    const defaultMax = Math.min(DEFAULT_MAX_COLORS, activePalette.length);
+    const defaultMax =
+      DEFAULT_MAX_COLORS > 0 ? Math.min(DEFAULT_MAX_COLORS, activePalette.length) : activePalette.length;
     setStudioForm((current) => ({
       ...current,
       maxColors:
@@ -709,12 +1155,42 @@ export default function App() {
   }, [activePalette]);
 
   useEffect(() => {
-    setStudioForm((current) => ({
-      ...current,
-      offsetXmm: Math.min(current.offsetXmm, maxOffsetX),
-      offsetYmm: Math.min(current.offsetYmm, maxOffsetY),
-    }));
-  }, [maxOffsetX, maxOffsetY]);
+    if (!mosaicResult) {
+      setReplaceFromColorId(null);
+      setReplaceToColorId(null);
+      return;
+    }
+
+    const usedColorIds = mosaicResult.used_colors.map((item) => item.id);
+    const activeColorIds = activePalette.map((item) => item.id);
+
+    setReplaceFromColorId((current) => {
+      if (current !== null && usedColorIds.includes(current)) {
+        return current;
+      }
+      return usedColorIds[0] ?? null;
+    });
+
+    setReplaceToColorId((current) => {
+      const fallbackFrom = usedColorIds[0] ?? null;
+      if (
+        current !== null &&
+        activeColorIds.includes(current) &&
+        (fallbackFrom === null || current !== fallbackFrom)
+      ) {
+        return current;
+      }
+
+      if (fallbackFrom !== null) {
+        const alternative = activeColorIds.find((id) => id !== fallbackFrom);
+        if (alternative !== undefined) {
+          return alternative;
+        }
+      }
+
+      return activeColorIds[0] ?? null;
+    });
+  }, [mosaicResult, activePalette]);
 
   useEffect(() => {
     setGridDraft({
@@ -732,14 +1208,179 @@ export default function App() {
   }, [imagePreviewUrl]);
 
   useEffect(() => {
+    if (previewSource) {
+      return;
+    }
+
+    previewDragRef.current = null;
+    setPreviewDragging(false);
+    setPreviewPan({ x: 0, y: 0 });
+    setPreviewZoom(1);
+  }, [previewSource]);
+
+  useEffect(() => {
     setDbDraft((current) => ({
       ...current,
       connection_string: composedConnectionString,
     }));
   }, [composedConnectionString]);
 
+  useEffect(() => {
+    if (!selectedProject) {
+      setProjectShares([]);
+      setProjectOrders([]);
+      return;
+    }
+
+    setShareGenerationId(selectedProject.active_generation_id ?? null);
+    setOrderForm((current) => ({
+      ...current,
+      generation_id: selectedProject.active_generation_id ?? null,
+    }));
+  }, [selectedProject]);
+
   const setStudioField = <K extends keyof StudioFormState>(field: K, value: StudioFormState[K]) => {
     setStudioForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const nudgeMosaicOffset = useCallback((deltaXmm: number, deltaYmm: number) => {
+    setStudioForm((current) => ({
+      ...current,
+      offsetXmm: Number((current.offsetXmm + deltaXmm).toFixed(3)),
+      offsetYmm: Number((current.offsetYmm + deltaYmm).toFixed(3)),
+    }));
+  }, []);
+
+  const alignMosaicOffset = useCallback(
+    (anchor: "top-left" | "top-right" | "bottom-left" | "bottom-right" | "center") => {
+      setStudioForm((current) => {
+        const guides = computeOffsetGuides(
+          current.fieldWidthMm,
+          current.fieldHeightMm,
+          current.cellSizeMm,
+          current.gapMm,
+        );
+
+        if (anchor === "top-left") {
+          return { ...current, offsetXmm: Number(guides.left.toFixed(3)), offsetYmm: Number(guides.top.toFixed(3)) };
+        }
+        if (anchor === "top-right") {
+          return { ...current, offsetXmm: Number(guides.right.toFixed(3)), offsetYmm: Number(guides.top.toFixed(3)) };
+        }
+        if (anchor === "bottom-left") {
+          return { ...current, offsetXmm: Number(guides.left.toFixed(3)), offsetYmm: Number(guides.bottom.toFixed(3)) };
+        }
+        if (anchor === "bottom-right") {
+          return { ...current, offsetXmm: Number(guides.right.toFixed(3)), offsetYmm: Number(guides.bottom.toFixed(3)) };
+        }
+
+        return {
+          ...current,
+          offsetXmm: Number(guides.centerX.toFixed(3)),
+          offsetYmm: Number(guides.centerY.toFixed(3)),
+        };
+      });
+    },
+    [],
+  );
+
+  const nudgePreviewPan = useCallback((deltaXpx: number, deltaYpx: number) => {
+    setPreviewPan((current) => ({
+      x: Number((current.x + deltaXpx).toFixed(1)),
+      y: Number((current.y + deltaYpx).toFixed(1)),
+    }));
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== "studio" || !canUseStudio) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+        return;
+      }
+
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      const baseStep = Math.max(0.1, positionStepMm);
+      const step = event.shiftKey ? baseStep * 5 : event.altKey ? baseStep / 5 : baseStep;
+      if (event.key === "ArrowLeft") {
+        nudgeMosaicOffset(-step, 0);
+      } else if (event.key === "ArrowRight") {
+        nudgeMosaicOffset(step, 0);
+      } else if (event.key === "ArrowUp") {
+        nudgeMosaicOffset(0, -step);
+      } else if (event.key === "ArrowDown") {
+        nudgeMosaicOffset(0, step);
+      }
+      event.preventDefault();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [activeTab, canUseStudio, positionStepMm, nudgeMosaicOffset]);
+
+  const buildProjectGenerationPayload = (): ProjectSaveGenerationRequest | null => {
+    if (!mosaicResult) {
+      return null;
+    }
+
+    return {
+      name: generationNameDraft.trim(),
+      note: generationNoteDraft.trim(),
+      snapshot: {
+        mosaic: mosaicResult,
+        include_color_ids: includeColorIds,
+        exclude_color_ids: excludeColorIds,
+        grout_color_id: studioForm.groutColorId,
+        preview_zoom: previewZoom,
+        preview_pan_x: previewPan.x,
+        preview_pan_y: previewPan.y,
+      },
+    };
+  };
+
+  const applyProjectGeneration = (generation: ProjectGenerationRead, project?: ProjectRead) => {
+    setMosaicResult(normalizeMosaicResult(generation.snapshot.mosaic));
+    setIncludeColorIds(generation.snapshot.include_color_ids);
+    setExcludeColorIds(generation.snapshot.exclude_color_ids);
+    setStudioForm((current) => ({
+      ...current,
+      fieldWidthMm: generation.snapshot.mosaic.field_width_mm,
+      fieldHeightMm: generation.snapshot.mosaic.field_height_mm,
+      cellSizeMm: generation.snapshot.mosaic.cell_size_mm,
+      gapMm: generation.snapshot.mosaic.gap_mm,
+      maxColors: generation.snapshot.mosaic.requested_max_colors,
+      groutColorId: generation.snapshot.grout_color_id,
+      offsetXmm: generation.snapshot.mosaic.offset_x_mm,
+      offsetYmm: generation.snapshot.mosaic.offset_y_mm,
+    }));
+    setPreviewZoom(clampNumber(generation.snapshot.preview_zoom, 0.4, 8));
+    setPreviewPan({
+      x: generation.snapshot.preview_pan_x,
+      y: generation.snapshot.preview_pan_y,
+    });
+
+    if (project && project.source_image_base64.trim().length > 0) {
+      const sourceMime =
+        project.source_image_mime_type.trim().length > 0
+          ? project.source_image_mime_type
+          : "image/png";
+      setImagePreviewUrl(`data:${sourceMime};base64,${project.source_image_base64}`);
+      setImageFile(null);
+    }
   };
 
   const onDbProviderChange = (provider: string) => {
@@ -771,6 +1412,59 @@ export default function App() {
       return;
     }
     setActiveTab(tab);
+  };
+
+  const onLogin = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAuthBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await login({
+        username: loginUsername.trim(),
+        password: loginPassword,
+      });
+      setAuthToken(response.token);
+      setAuthSession({
+        is_authenticated: true,
+        expires_at: response.expires_at,
+        user: response.user,
+      });
+      setNotice(`Вход выполнен: ${response.user.display_name} (${roleLabel(response.user.role)}).`);
+      await refreshBootstrap();
+      await refreshProjects();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Не удалось выполнить вход.");
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const onLogout = async () => {
+    setAuthBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      if (authToken) {
+        await logout();
+      }
+    } catch {
+      // Ignore logout API failures and clear local session anyway.
+    } finally {
+      setAuthToken(null);
+      setAuthSession({
+        is_authenticated: false,
+        expires_at: null,
+        user: null,
+      });
+      setProjects([]);
+      setSelectedProjectId(null);
+      setSelectedProject(null);
+      setProjectShares([]);
+      setProjectOrders([]);
+      setAuthBusy(false);
+      setNotice("Сессия завершена.");
+    }
   };
 
   const applyGridDraft = () => {
@@ -881,6 +1575,70 @@ export default function App() {
     setExcludeColorIds((items) => items.filter((id) => id !== colorId));
   };
 
+  const resetPreviewTransform = () => {
+    setPreviewZoom(1);
+    setPreviewPan({ x: 0, y: 0 });
+  };
+
+  const onPreviewWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (!previewSource) {
+      return;
+    }
+
+    event.preventDefault();
+    const direction = event.deltaY < 0 ? 1 : -1;
+    const zoomStep = direction > 0 ? 0.12 : -0.12;
+    setPreviewZoom((current) => clampNumber(Number((current + zoomStep).toFixed(2)), 0.4, 8));
+  };
+
+  const onPreviewPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!previewSource) {
+      return;
+    }
+
+    previewDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: previewPan.x,
+      originY: previewPan.y,
+    };
+
+    setPreviewDragging(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const onPreviewPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!previewDragging || !previewDragRef.current) {
+      return;
+    }
+
+    if (event.pointerId !== previewDragRef.current.pointerId) {
+      return;
+    }
+
+    const dx = event.clientX - previewDragRef.current.startX;
+    const dy = event.clientY - previewDragRef.current.startY;
+    setPreviewPan({
+      x: previewDragRef.current.originX + dx,
+      y: previewDragRef.current.originY + dy,
+    });
+  };
+
+  const onPreviewPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (previewDragRef.current && event.pointerId === previewDragRef.current.pointerId) {
+      previewDragRef.current = null;
+      setPreviewDragging(false);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    }
+  };
+
+  const onPreviewZoomChange = (value: number) => {
+    setPreviewZoom(clampNumber(value, 0.4, 8));
+  };
+
   const onImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
     setImageFile(file);
@@ -891,12 +1649,18 @@ export default function App() {
       URL.revokeObjectURL(imagePreviewUrl);
       setImagePreviewUrl(null);
     }
+    resetPreviewTransform();
     if (file) {
       setImagePreviewUrl(URL.createObjectURL(file));
     }
   };
 
   const onGenerateMosaic = async () => {
+    if (!canUseStudio) {
+      setError("Роль просмотра не может запускать генерацию.");
+      return;
+    }
+
     if (!imageFile) {
       setError("Перед генерацией загрузите изображение.");
       return;
@@ -911,10 +1675,474 @@ export default function App() {
         includeColorIds,
         excludeColorIds,
       );
-      setMosaicResult(response);
+      setMosaicResult(normalizeMosaicResult(response));
       setNotice("Мозаика успешно сгенерирована.");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Ошибка генерации.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onReplaceMosaicColor = async () => {
+    if (!canUseStudio) {
+      setError("Роль просмотра не может менять цвета.");
+      return;
+    }
+
+    if (!mosaicResult) {
+      return;
+    }
+    if (replaceFromColorId === null || replaceToColorId === null) {
+      setError("Выберите исходный и целевой цвет.");
+      return;
+    }
+    if (replaceFromColorId === replaceToColorId) {
+      setError("Выберите разные цвета для замены.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const response = await replaceMosaicColor({
+        grid_color_ids: mosaicResult.grid_color_ids,
+        from_color_id: replaceFromColorId,
+        to_color_id: replaceToColorId,
+        field_width_mm: mosaicResult.field_width_mm,
+        field_height_mm: mosaicResult.field_height_mm,
+        cell_size_mm: mosaicResult.cell_size_mm,
+        gap_mm: mosaicResult.gap_mm,
+        offset_x_mm: mosaicResult.offset_x_mm,
+        offset_y_mm: mosaicResult.offset_y_mm,
+        grout_color_hex: mosaicResult.grout_color_hex,
+        requested_max_colors: mosaicResult.requested_max_colors,
+      });
+
+      setMosaicResult(normalizeMosaicResult(response));
+      setNotice("Цвет успешно заменен во всей мозаике.");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Ошибка замены цвета.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onExportMosaic = async (
+    format:
+      | "png"
+      | "jpeg"
+      | "svg"
+      | "pdf"
+      | "materials-csv"
+      | "grid-csv"
+      | "modules-csv"
+      | "assembly-kit-pdf",
+  ) => {
+    if (!canUseStudio) {
+      setError("Роль просмотра не может экспортировать файлы.");
+      return;
+    }
+
+    if (!mosaicResult) {
+      setError("Сначала сгенерируйте мозаику, затем выгружайте файл.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const baseFileName = (
+        selectedProject?.name ??
+        generationNameDraft.trim() ??
+        "mozaika"
+      )
+        .trim()
+        .replace(/[\\/:*?"<>|]+/g, "-");
+
+      const response = await exportMosaic(format, {
+        grid_color_ids: mosaicResult.grid_color_ids,
+        field_width_mm: mosaicResult.field_width_mm,
+        field_height_mm: mosaicResult.field_height_mm,
+        cell_size_mm: mosaicResult.cell_size_mm,
+        gap_mm: mosaicResult.gap_mm,
+        offset_x_mm: mosaicResult.offset_x_mm,
+        offset_y_mm: mosaicResult.offset_y_mm,
+        grout_color_hex: mosaicResult.grout_color_hex,
+        dpi: Math.max(72, Math.min(600, Math.round(exportDpi))),
+        mirror_horizontal: exportMirrorHorizontal,
+        include_legend: exportIncludeLegend,
+        module_chip_columns: Math.max(1, Math.min(256, Math.floor(moduleChipColumns))),
+        module_chip_rows: Math.max(1, Math.min(256, Math.floor(moduleChipRows))),
+        module_start_number: Math.max(1, Math.floor(moduleStartNumber)),
+        include_color_numbers: exportIncludeColorNumbers,
+        file_name: baseFileName.length > 0 ? baseFileName : "mozaika",
+      });
+
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(response.blob);
+      link.href = url;
+      link.download = response.fileName;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+
+      setNotice(`Файл готов: ${response.fileName}`);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Не удалось экспортировать файл.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onCreateProject = async () => {
+    if (!canEditProjects) {
+      setError("Роль просмотра не может создавать проекты.");
+      return;
+    }
+
+    if (!mosaicResult) {
+      setError("Сначала сгенерируйте мозаику, затем сохраняйте проект.");
+      return;
+    }
+
+    const projectName = projectNameDraft.trim();
+    if (projectName.length < 2) {
+      setError("Введите название проекта (минимум 2 символа).");
+      return;
+    }
+
+    const generationPayload = buildProjectGenerationPayload();
+    if (!generationPayload) {
+      setError("Для сохранения версии нужна сгенерированная мозаика.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      let sourceImageBase64 = "";
+      let sourceImageMimeType = "";
+      if (imageFile) {
+        sourceImageBase64 = await fileToBase64(imageFile);
+        sourceImageMimeType = imageFile.type ?? "";
+      } else if (selectedProject) {
+        sourceImageBase64 = selectedProject.source_image_base64;
+        sourceImageMimeType = selectedProject.source_image_mime_type;
+      }
+
+      const response = await createProject({
+        name: projectName,
+        description: projectDescriptionDraft.trim(),
+        source_image_mime_type: sourceImageMimeType,
+        source_image_base64: sourceImageBase64,
+        initial_generation: generationPayload,
+      });
+      setSelectedProject(response);
+      setSelectedProjectId(response.id);
+      setProjectNameDraft(response.name);
+      setProjectDescriptionDraft(response.description);
+      if (response.active_generation) {
+        applyProjectGeneration(response.active_generation, response);
+      }
+      setOrderForm((current) => ({
+        ...current,
+        generation_id: response.active_generation_id ?? null,
+      }));
+      setShareGenerationId(response.active_generation_id ?? null);
+      await refreshProjectWorkflow(response.id);
+      await refreshProjects();
+      setNotice(`Проект сохранен: ${response.name}`);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error ? requestError.message : "Не удалось создать проект.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onSaveGenerationToProject = async () => {
+    if (!canEditProjects) {
+      setError("Роль просмотра не может сохранять версии.");
+      return;
+    }
+
+    if (selectedProjectId === null) {
+      setError("Выберите проект для сохранения новой версии.");
+      return;
+    }
+
+    const generationPayload = buildProjectGenerationPayload();
+    if (!generationPayload) {
+      setError("Сначала сгенерируйте мозаику.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await saveProjectGeneration(selectedProjectId, generationPayload);
+      const project = await fetchProject(selectedProjectId);
+      setSelectedProject(project);
+      if (project.active_generation) {
+        applyProjectGeneration(project.active_generation, project);
+      }
+      setOrderForm((current) => ({
+        ...current,
+        generation_id: project.active_generation_id ?? null,
+      }));
+      setShareGenerationId(project.active_generation_id ?? null);
+      await refreshProjectWorkflow(project.id);
+      await refreshProjects();
+      setNotice(`Версия сохранена в проект #${selectedProjectId}.`);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Не удалось сохранить версию в проект.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onOpenProject = async (projectId: number) => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const project = await fetchProject(projectId);
+      setSelectedProject(project);
+      setSelectedProjectId(project.id);
+      setProjectNameDraft(project.name);
+      setProjectDescriptionDraft(project.description);
+
+      if (project.active_generation) {
+        applyProjectGeneration(project.active_generation, project);
+      }
+      setOrderForm((current) => ({
+        ...current,
+        generation_id: project.active_generation_id ?? null,
+      }));
+      setShareGenerationId(project.active_generation_id ?? null);
+      await refreshProjectWorkflow(project.id);
+
+      setNotice(`Проект загружен: ${project.name}`);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error ? requestError.message : "Не удалось загрузить проект.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onActivateProjectGeneration = async (projectId: number, generationId: number) => {
+    if (!canEditProjects) {
+      setError("Роль просмотра не может активировать версии.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const project = await activateProjectGeneration(projectId, generationId);
+      setSelectedProject(project);
+      setSelectedProjectId(project.id);
+      setProjectNameDraft(project.name);
+      setProjectDescriptionDraft(project.description);
+      if (project.active_generation) {
+        applyProjectGeneration(project.active_generation, project);
+      } else {
+        const generation = await fetchProjectGeneration(projectId, generationId);
+        applyProjectGeneration(generation, project);
+      }
+      setOrderForm((current) => ({
+        ...current,
+        generation_id: project.active_generation_id ?? generationId,
+      }));
+      setShareGenerationId(project.active_generation_id ?? generationId);
+      await refreshProjectWorkflow(project.id);
+      await refreshProjects();
+      setNotice(`Загружена версия #${generationId} из проекта #${projectId}.`);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error ? requestError.message : "Не удалось загрузить сохраненную версию.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onUpdateProjectMeta = async () => {
+    if (!canEditProjects) {
+      setError("Роль просмотра не может менять метаданные проекта.");
+      return;
+    }
+
+    if (selectedProjectId === null) {
+      setError("Выберите проект.");
+      return;
+    }
+    if (projectNameDraft.trim().length < 2) {
+      setError("Название проекта должно содержать минимум 2 символа.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const project = await updateProject(selectedProjectId, {
+        name: projectNameDraft.trim(),
+        description: projectDescriptionDraft.trim(),
+      });
+      setSelectedProject(project);
+      await refreshProjects();
+      setNotice("Метаданные проекта обновлены.");
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error ? requestError.message : "Не удалось обновить проект.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onCreateProjectShare = async () => {
+    if (selectedProjectId === null) {
+      setError("Сначала выберите проект.");
+      return;
+    }
+
+    if (!canEditProjects) {
+      setError("Недостаточно прав для создания shared-ссылки.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const share = await createProjectShare(selectedProjectId, {
+        generation_id: shareGenerationId,
+        expires_in_days: shareExpiresInDays > 0 ? shareExpiresInDays : null,
+      });
+      await refreshProjectWorkflow(selectedProjectId);
+      const shareUrl = `${window.location.origin}${window.location.pathname}?share=${encodeURIComponent(share.token)}`;
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        setNotice(`Ссылка создана и скопирована: ${shareUrl}`);
+      } catch {
+        setNotice(`Ссылка создана: ${shareUrl}`);
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Не удалось создать shared-ссылку.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onCopyShareUrl = async (token: string) => {
+    const shareUrl = `${window.location.origin}${window.location.pathname}?share=${encodeURIComponent(token)}`;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setNotice("Shared-ссылка скопирована в буфер.");
+    } catch {
+      setNotice(shareUrl);
+    }
+  };
+
+  const onRevokeShare = async (shareId: number) => {
+    if (selectedProjectId === null) {
+      return;
+    }
+
+    if (!canEditProjects) {
+      setError("Недостаточно прав для отзыва ссылки.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await revokeProjectShare(selectedProjectId, shareId);
+      await refreshProjectWorkflow(selectedProjectId);
+      setNotice("Ссылка отозвана.");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Не удалось отозвать ссылку.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onCreateProjectOrder = async () => {
+    if (selectedProjectId === null) {
+      setError("Сначала выберите проект.");
+      return;
+    }
+    if (!canEditProjects) {
+      setError("Недостаточно прав для отправки предварительного заказа.");
+      return;
+    }
+    if (orderForm.customer_name.trim().length < 2) {
+      setError("Введите контактное лицо (минимум 2 символа).");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await createProjectOrder(selectedProjectId, {
+        ...orderForm,
+        customer_name: orderForm.customer_name.trim(),
+        customer_email: orderForm.customer_email.trim(),
+        customer_phone: orderForm.customer_phone.trim(),
+        comment: orderForm.comment.trim(),
+      });
+      await refreshProjectWorkflow(selectedProjectId);
+      setNotice("Предварительный заказ отправлен на согласование.");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Не удалось отправить предварительный заказ.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onUpdateOrderStatus = async (orderId: number) => {
+    if (selectedProjectId === null) {
+      return;
+    }
+    if (!isAdmin) {
+      setError("Только администратор может менять статус заказа.");
+      return;
+    }
+
+    const nextStatus = orderStatusDraftByOrder[orderId] ?? "in_review";
+    const statusComment = orderStatusCommentByOrder[orderId] ?? "";
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await updateProjectOrderStatus(selectedProjectId, orderId, {
+        status: nextStatus,
+        status_comment: statusComment,
+      });
+      await refreshProjectWorkflow(selectedProjectId);
+      setNotice("Статус заказа обновлен.");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Не удалось обновить статус заказа.");
     } finally {
       setBusy(false);
     }
@@ -1167,6 +2395,48 @@ export default function App() {
     }
   };
 
+  if (!authInitialized) {
+    return <div className="app-loading">Загрузка студии Mozaika...</div>;
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="login-shell">
+        <section className="login-panel">
+          <p className="login-kicker">Mozaika</p>
+          <h1 className="login-title">Вход в студию</h1>
+          <p className="login-subtitle">
+            Авторизуйтесь, чтобы открыть генератор мозаики, проекты, палитру и заказы.
+          </p>
+          <form className="auth-form" onSubmit={onLogin}>
+            <input
+              type="text"
+              value={loginUsername}
+              onChange={(event) => setLoginUsername(event.target.value)}
+              placeholder="Логин"
+              autoComplete="username"
+            />
+            <input
+              type="password"
+              value={loginPassword}
+              onChange={(event) => setLoginPassword(event.target.value)}
+              placeholder="Пароль"
+              autoComplete="current-password"
+            />
+            <button type="submit" className="button-primary" disabled={authBusy}>
+              {authBusy ? "Вход..." : "Войти"}
+            </button>
+          </form>
+          {error && <div className="alert alert-error">{error}</div>}
+          {notice && <div className="alert alert-success">{notice}</div>}
+          <div className="login-demo">
+            <small>Демо-аккаунты: admin/admin123, customer/customer123, viewer/viewer123</small>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
   if (loadingBootstrap && bootstrap === null) {
     return <div className="app-loading">Загрузка студии Mozaika...</div>;
   }
@@ -1196,11 +2466,28 @@ export default function App() {
               {gridEstimate.columns} x {gridEstimate.rows}
             </strong>
           </article>
+          <article className="auth-card">
+            <span>Пользователь</span>
+            <div className="auth-inline">
+              <strong>
+                {authSession.user?.display_name} ({roleLabel(authSession.user?.role ?? "viewer")})
+              </strong>
+              <small>до {formatDateTime(authSession.expires_at)}</small>
+              <button
+                type="button"
+                className="button-ghost"
+                onClick={() => void onLogout()}
+                disabled={authBusy}
+              >
+                Выйти
+              </button>
+            </div>
+          </article>
         </div>
       </header>
 
       <nav className="tabs">
-        {tabs.map((tab) => (
+        {visibleTabs.map((tab) => (
           <button
             key={tab.key}
             type="button"
@@ -1214,6 +2501,16 @@ export default function App() {
       {activeTab === "studio" && (
         <p className="tabs-help">
           Вкладка открывает рабочую область. Расчет выполняется кнопкой "Сгенерировать мозаику" ниже.
+        </p>
+      )}
+      {activeTab === "projects" && (
+        <p className="tabs-help">
+          Вкладка хранит историю проектов и версий генерации. Любую сохраненную версию можно загрузить обратно в студию.
+        </p>
+      )}
+      {!isAuthenticated && (
+        <p className="tabs-help">
+          Для сохранения проектов, генерации и экспорта войдите под ролью заказчика или администратора.
         </p>
       )}
 
@@ -1345,12 +2642,10 @@ export default function App() {
               <label>
                 <LabelTitle
                   text="Смещение X (мм)"
-                  hint="Сдвиг мозаики вправо внутри рабочего поля."
+                  hint="Сдвиг мозаики по оси X. Допускаются отрицательные значения, лишняя часть обрезается по рабочему полю."
                 />
                 <input
                   type="number"
-                  min={0}
-                  max={maxOffsetX}
                   value={studioForm.offsetXmm}
                   onChange={(event) => setStudioField("offsetXmm", Number(event.target.value))}
                 />
@@ -1358,19 +2653,138 @@ export default function App() {
               <label>
                 <LabelTitle
                   text="Смещение Y (мм)"
-                  hint="Сдвиг мозаики вниз внутри рабочего поля."
+                  hint="Сдвиг мозаики по оси Y. Допускаются отрицательные значения, лишняя часть обрезается по рабочему полю."
                 />
                 <input
                   type="number"
-                  min={0}
-                  max={maxOffsetY}
                   value={studioForm.offsetYmm}
                   onChange={(event) => setStudioField("offsetYmm", Number(event.target.value))}
                 />
               </label>
+              <label>
+                <LabelTitle
+                  text="Шаг позиционирования (мм)"
+                  hint="Шаг для кнопок сдвига и горячих клавиш стрелок. Shift+стрелка = крупный шаг, Alt+стрелка = точный шаг."
+                />
+                <input
+                  type="number"
+                  min={0.1}
+                  step={0.1}
+                  value={positionStepMm}
+                  onChange={(event) => setPositionStepMm(Math.max(0.1, Number(event.target.value)))}
+                />
+              </label>
+              <div className="positioning-info">
+                <span>
+                  Перекрытие по X/Y: {offsetGuides.overflowX.toFixed(1)} / {offsetGuides.overflowY.toFixed(1)} мм
+                </span>
+                <span>
+                  Рекомендованный шаг по сетке: {offsetGuides.pitchMm.toFixed(1)} мм
+                </span>
+              </div>
+            </div>
+            <div className="positioning-pad">
+              <button
+                type="button"
+                className="button-ghost"
+                onClick={() => nudgeMosaicOffset(0, -positionStepMm)}
+                disabled={busy || !canUseStudio}
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                className="button-ghost"
+                onClick={() => nudgeMosaicOffset(-positionStepMm, 0)}
+                disabled={busy || !canUseStudio}
+              >
+                ←
+              </button>
+              <button
+                type="button"
+                className="button-ghost"
+                onClick={() => nudgeMosaicOffset(positionStepMm, 0)}
+                disabled={busy || !canUseStudio}
+              >
+                →
+              </button>
+              <button
+                type="button"
+                className="button-ghost"
+                onClick={() => nudgeMosaicOffset(0, positionStepMm)}
+                disabled={busy || !canUseStudio}
+              >
+                ↓
+              </button>
+              <button
+                type="button"
+                className="button-ghost"
+                onClick={() => setPositionStepMm(Number(offsetGuides.pitchMm.toFixed(1)))}
+                disabled={busy || !canUseStudio}
+              >
+                Шаг = сетка
+              </button>
+            </div>
+            <div className="actions position-actions">
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => alignMosaicOffset("top-left")}
+                disabled={busy || !canUseStudio}
+              >
+                Левый верх
+              </button>
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => alignMosaicOffset("center")}
+                disabled={busy || !canUseStudio}
+              >
+                Центр
+              </button>
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => alignMosaicOffset("bottom-right")}
+                disabled={busy || !canUseStudio}
+              >
+                Правый низ
+              </button>
+              <button
+                type="button"
+                className="button-ghost"
+                onClick={() => alignMosaicOffset("top-right")}
+                disabled={busy || !canUseStudio}
+              >
+                Правый верх
+              </button>
+              <button
+                type="button"
+                className="button-ghost"
+                onClick={() => alignMosaicOffset("bottom-left")}
+                disabled={busy || !canUseStudio}
+              >
+                Левый низ
+              </button>
+              <button
+                type="button"
+                className="button-ghost"
+                onClick={() => {
+                  setStudioField("offsetXmm", 0);
+                  setStudioField("offsetYmm", 0);
+                }}
+                disabled={busy || !canUseStudio}
+              >
+                Сброс 0/0
+              </button>
             </div>
             <div className="actions">
-              <button type="button" className="button-secondary" onClick={applyGridDraft} disabled={busy}>
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={applyGridDraft}
+                disabled={busy || !canUseStudio}
+              >
                 Применить оценку сетки
               </button>
             </div>
@@ -1411,23 +2825,177 @@ export default function App() {
               Кнопка ниже запускает генерацию и обновляет превью с учетом текущих параметров.
             </p>
 
-            <button type="button" className="button-primary" onClick={onGenerateMosaic} disabled={busy}>
+            <button
+              type="button"
+              className="button-primary"
+              onClick={onGenerateMosaic}
+              disabled={busy || !canUseStudio}
+            >
               {busy ? "Генерация..." : "Сгенерировать мозаику"}
             </button>
+            {!canUseStudio && (
+              <p className="muted">
+                Текущая роль: {roleLabel(currentRole)}. Генерация и экспорт доступны ролям Заказчик/Админ.
+              </p>
+            )}
           </article>
 
           <article className="panel preview-panel">
             <h2>Превью</h2>
-            {!mosaicResult && imagePreviewUrl && (
-              <img className="preview-image" src={imagePreviewUrl} alt="Превью исходного изображения" />
+            {previewSource && (
+              <>
+                <div className="preview-toolbar">
+                  <label>
+                    Zoom
+                    <input
+                      type="range"
+                      min={0.4}
+                      max={8}
+                      step={0.01}
+                      value={previewZoom}
+                      onChange={(event) => onPreviewZoomChange(Number(event.target.value))}
+                    />
+                  </label>
+                  <label>
+                    %
+                    <input
+                      type="number"
+                      min={40}
+                      max={800}
+                      step={1}
+                      value={Math.round(previewZoom * 100)}
+                      onChange={(event) =>
+                        onPreviewZoomChange(Number(event.target.value) / 100)
+                      }
+                    />
+                  </label>
+                  <label>
+                    Шаг zoom
+                    <input
+                      type="number"
+                      min={0.01}
+                      max={2}
+                      step={0.01}
+                      value={previewZoomStep}
+                      onChange={(event) =>
+                        setPreviewZoomStep(Math.max(0.01, Number(event.target.value)))
+                      }
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="button-ghost"
+                    onClick={() => onPreviewZoomChange(previewZoom - previewZoomStep)}
+                    disabled={previewZoom <= 0.4}
+                  >
+                    -
+                  </button>
+                  <button
+                    type="button"
+                    className="button-ghost"
+                    onClick={() => onPreviewZoomChange(previewZoom + previewZoomStep)}
+                    disabled={previewZoom >= 8}
+                  >
+                    +
+                  </button>
+                  <label>
+                    Pan шаг px
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={previewPanStepPx}
+                      onChange={(event) =>
+                        setPreviewPanStepPx(Math.max(1, Math.round(Number(event.target.value))))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Pan X
+                    <input
+                      type="number"
+                      step={1}
+                      value={previewPan.x}
+                      onChange={(event) =>
+                        setPreviewPan((current) => ({
+                          ...current,
+                          x: Number(event.target.value),
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Pan Y
+                    <input
+                      type="number"
+                      step={1}
+                      value={previewPan.y}
+                      onChange={(event) =>
+                        setPreviewPan((current) => ({
+                          ...current,
+                          y: Number(event.target.value),
+                        }))
+                      }
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="button-ghost"
+                    onClick={() => nudgePreviewPan(0, -previewPanStepPx)}
+                  >
+                    Pan ↑
+                  </button>
+                  <button
+                    type="button"
+                    className="button-ghost"
+                    onClick={() => nudgePreviewPan(-previewPanStepPx, 0)}
+                  >
+                    Pan ←
+                  </button>
+                  <button
+                    type="button"
+                    className="button-ghost"
+                    onClick={() => nudgePreviewPan(previewPanStepPx, 0)}
+                  >
+                    Pan →
+                  </button>
+                  <button
+                    type="button"
+                    className="button-ghost"
+                    onClick={() => nudgePreviewPan(0, previewPanStepPx)}
+                  >
+                    Pan ↓
+                  </button>
+                  <button type="button" className="button-secondary" onClick={resetPreviewTransform}>
+                    Reset view
+                  </button>
+                </div>
+                <div
+                  className={previewDragging ? "preview-stage is-dragging" : "preview-stage"}
+                  onWheel={onPreviewWheel}
+                  onPointerDown={onPreviewPointerDown}
+                  onPointerMove={onPreviewPointerMove}
+                  onPointerUp={onPreviewPointerUp}
+                  onPointerCancel={onPreviewPointerUp}
+                  onPointerLeave={onPreviewPointerUp}
+                >
+                  <img
+                    className="preview-image preview-image-transform"
+                    src={previewSource}
+                    alt={previewAlt}
+                    style={{
+                      transform: `translate(${previewPan.x}px, ${previewPan.y}px) scale(${previewZoom})`,
+                    }}
+                    draggable={false}
+                  />
+                </div>
+                <p className="muted">
+                  Drag to pan, use mouse wheel to zoom. Для смещения мозаики по мм используйте блок позиционирования и стрелки клавиатуры.
+                </p>
+              </>
             )}
             {mosaicResult && (
               <>
-                <img
-                  className="preview-image"
-                  src={`data:image/png;base64,${mosaicResult.preview_png_base64}`}
-                  alt="Превью сгенерированной мозаики"
-                />
                 <div className="stats-grid">
                   <div>
                     <span>Сетка</span>
@@ -1445,6 +3013,14 @@ export default function App() {
                   <div>
                     <span>Использовано цветов</span>
                     <strong>{mosaicResult.actual_colors_used}</strong>
+                  </div>
+                  <div>
+                    <span>Всего чипов</span>
+                    <strong>{mosaicResult.total_chips}</strong>
+                  </div>
+                  <div>
+                    <span>Цена</span>
+                    <strong>{formatMoney(mosaicResult.price.total_price, mosaicResult.price.currency)}</strong>
                   </div>
                 </div>
 
@@ -1465,10 +3041,722 @@ export default function App() {
                     </div>
                   ))}
                 </div>
+
+                <div className="inline-editor">
+                  <h3>Расчет цены</h3>
+                  <div className="usage-list">
+                    <div className="usage-row">
+                      <div>База</div>
+                      <div className="usage-values">
+                        {formatMoney(mosaicResult.price.setup_price, mosaicResult.price.currency)}
+                      </div>
+                    </div>
+                    <div className="usage-row">
+                      <div>Чипы ({mosaicResult.price.total_chips})</div>
+                      <div className="usage-values">
+                        {formatMoney(mosaicResult.price.chips_price, mosaicResult.price.currency)}
+                      </div>
+                    </div>
+                    <div className="usage-row">
+                      <div>Цвета ({mosaicResult.actual_colors_used})</div>
+                      <div className="usage-values">
+                        {formatMoney(mosaicResult.price.colors_price, mosaicResult.price.currency)}
+                      </div>
+                    </div>
+                    <div className="usage-row">
+                      <div>Сложность (сверх порога цветов)</div>
+                      <div className="usage-values">
+                        {formatMoney(mosaicResult.price.complexity_price, mosaicResult.price.currency)}
+                      </div>
+                    </div>
+                    <div className="usage-row">
+                      <div>Затирка ({mosaicResult.price.area_sq_m.toFixed(2)} м²)</div>
+                      <div className="usage-values">
+                        {formatMoney(mosaicResult.price.grout_price, mosaicResult.price.currency)}
+                      </div>
+                    </div>
+                    <div className="usage-row">
+                      <div>Промежуточный итог</div>
+                      <div className="usage-values">
+                        {formatMoney(mosaicResult.price.subtotal_price, mosaicResult.price.currency)}
+                      </div>
+                    </div>
+                    <div className="usage-row">
+                      <div>Минимальный заказ</div>
+                      <div className="usage-values">
+                        {formatMoney(mosaicResult.price.min_order_price, mosaicResult.price.currency)}
+                      </div>
+                    </div>
+                    <div className="usage-row">
+                      <div>
+                        <strong>Итого</strong>
+                        {mosaicResult.price.min_order_applied ? " (с учетом минимального заказа)" : ""}
+                      </div>
+                      <div className="usage-values">
+                        <strong>
+                          {formatMoney(mosaicResult.price.total_price, mosaicResult.price.currency)}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="inline-editor">
+                  <h3>Замена цвета</h3>
+                  <div className="form-grid two-col">
+                    <label>
+                      Исходный цвет
+                      <select
+                        value={replaceFromColorId ?? ""}
+                        onChange={(event) =>
+                          setReplaceFromColorId(
+                            event.target.value.length > 0 ? Number(event.target.value) : null,
+                          )
+                        }
+                      >
+                        <option value="">Выберите цвет</option>
+                        {mosaicResult.used_colors.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name} ({item.ral_code})
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Целевой цвет
+                      <select
+                        value={replaceToColorId ?? ""}
+                        onChange={(event) =>
+                          setReplaceToColorId(
+                            event.target.value.length > 0 ? Number(event.target.value) : null,
+                          )
+                        }
+                      >
+                        <option value="">Выберите цвет</option>
+                        {activePalette.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name} ({item.ral_code})
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <div className="actions">
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      onClick={onReplaceMosaicColor}
+                      disabled={
+                        busy ||
+                        !canUseStudio ||
+                        replaceFromColorId === null ||
+                        replaceToColorId === null
+                      }
+                    >
+                      Заменить во всей мозаике
+                    </button>
+                  </div>
+                </div>
+
+                <div className="inline-editor">
+                  <h3>Экспорт и печать</h3>
+                  <div className="form-grid two-col">
+                    <label>
+                      <LabelTitle
+                        text="DPI"
+                        hint="Разрешение для PNG/JPEG/PDF. Для черновой проверки 120-150, для печати обычно 200-300."
+                      />
+                      <input
+                        type="number"
+                        min={72}
+                        max={600}
+                        value={exportDpi}
+                        onChange={(event) => setExportDpi(Number(event.target.value))}
+                      />
+                    </label>
+                    <label>
+                      <LabelTitle
+                        text="Размер плитки (чипов по X)"
+                        hint="Сколько чипов по горизонтали входит в одну монтажную плитку."
+                      />
+                      <input
+                        type="number"
+                        min={1}
+                        max={256}
+                        value={moduleChipColumns}
+                        onChange={(event) => setModuleChipColumns(Number(event.target.value))}
+                      />
+                    </label>
+                    <label>
+                      <LabelTitle
+                        text="Размер плитки (чипов по Y)"
+                        hint="Сколько чипов по вертикали входит в одну монтажную плитку."
+                      />
+                      <input
+                        type="number"
+                        min={1}
+                        max={256}
+                        value={moduleChipRows}
+                        onChange={(event) => setModuleChipRows(Number(event.target.value))}
+                      />
+                    </label>
+                    <label>
+                      <LabelTitle
+                        text="Стартовый номер плитки"
+                        hint="Нумерация модулей идет снизу-слева по горизонтали, начиная с этого номера."
+                      />
+                      <input
+                        type="number"
+                        min={1}
+                        value={moduleStartNumber}
+                        onChange={(event) => setModuleStartNumber(Number(event.target.value))}
+                      />
+                    </label>
+                    <label className="checkbox">
+                      <input
+                        type="checkbox"
+                        checked={exportMirrorHorizontal}
+                        onChange={(event) => setExportMirrorHorizontal(event.target.checked)}
+                      />
+                      Зеркалить по горизонтали
+                    </label>
+                    <label className="checkbox">
+                      <input
+                        type="checkbox"
+                        checked={exportIncludeLegend}
+                        onChange={(event) => setExportIncludeLegend(event.target.checked)}
+                      />
+                      Добавлять легенду в PDF
+                    </label>
+                    <label className="checkbox">
+                      <input
+                        type="checkbox"
+                        checked={exportIncludeColorNumbers}
+                        onChange={(event) => setExportIncludeColorNumbers(event.target.checked)}
+                      />
+                      Печатать номера цветов в ячейках
+                    </label>
+                  </div>
+                  {moduleEstimate && (
+                    <div className="stats-grid">
+                      <div>
+                        <span>Плиток по X</span>
+                        <strong>{moduleEstimate.modulesX}</strong>
+                      </div>
+                      <div>
+                        <span>Плиток по Y</span>
+                        <strong>{moduleEstimate.modulesY}</strong>
+                      </div>
+                      <div>
+                        <span>Всего плиток</span>
+                        <strong>{moduleEstimate.modulesTotal}</strong>
+                      </div>
+                      <div>
+                        <span>Листов PDF-комплекта</span>
+                        <strong>{moduleEstimate.pagesTotal}</strong>
+                      </div>
+                    </div>
+                  )}
+                  <div className="actions export-actions">
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      onClick={() => void onExportMosaic("png")}
+                      disabled={busy || !canUseStudio}
+                    >
+                      Скачать PNG
+                    </button>
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      onClick={() => void onExportMosaic("jpeg")}
+                      disabled={busy || !canUseStudio}
+                    >
+                      Скачать JPEG
+                    </button>
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      onClick={() => void onExportMosaic("svg")}
+                      disabled={busy || !canUseStudio}
+                    >
+                      Скачать SVG
+                    </button>
+                    <button
+                      type="button"
+                      className="button-primary"
+                      onClick={() => void onExportMosaic("pdf")}
+                      disabled={busy || !canUseStudio}
+                    >
+                      Скачать PDF
+                    </button>
+                    <button
+                      type="button"
+                      className="button-ghost"
+                      onClick={() => void onExportMosaic("materials-csv")}
+                      disabled={busy || !canUseStudio}
+                    >
+                      Ведомость CSV
+                    </button>
+                    <button
+                      type="button"
+                      className="button-ghost"
+                      onClick={() => void onExportMosaic("grid-csv")}
+                      disabled={busy || !canUseStudio}
+                    >
+                      Координаты CSV
+                    </button>
+                    <button
+                      type="button"
+                      className="button-ghost"
+                      onClick={() => void onExportMosaic("modules-csv")}
+                      disabled={busy || !canUseStudio}
+                    >
+                      Плитки CSV
+                    </button>
+                    <button
+                      type="button"
+                      className="button-primary"
+                      onClick={() => void onExportMosaic("assembly-kit-pdf")}
+                      disabled={busy || !canUseStudio}
+                    >
+                      Комплект укладчика PDF
+                    </button>
+                  </div>
+                  <p className="muted">
+                    Форматы экспорта: PNG/JPEG/SVG/PDF, CSV по материалам/координатам/плиткам и PDF-комплект укладчика.
+                    Нумерация плиток в комплекте: снизу-слева, слева-направо. Опция зеркалирования нужна для печати схемы «лицом вниз».
+                  </p>
+                </div>
               </>
             )}
-            {!mosaicResult && !imagePreviewUrl && (
+            {!previewSource && (
               <div className="placeholder">Загрузите изображение и запустите генерацию.</div>
+            )}
+          </article>
+        </section>
+      )}
+
+      {activeTab === "projects" && (
+        <section className="workspace">
+          <article className="panel">
+            <h2>Сохранение проекта</h2>
+            {!isAuthenticated && (
+              <div className="placeholder">
+                Войдите в систему, чтобы сохранять проекты, версионировать генерации и отправлять предзаказы.
+              </div>
+            )}
+            <p className="muted">
+              Проект хранит состояние мозаики, параметры генерации, ограничения палитры и положение превью.
+            </p>
+            <div className="form-grid">
+              <label>
+                <LabelTitle
+                  text="Название проекта"
+                  hint="Читаемое название для списка проектов."
+                />
+                <input
+                  type="text"
+                  value={projectNameDraft}
+                  onChange={(event) => setProjectNameDraft(event.target.value)}
+                  placeholder="Например: Стена гостиной №1"
+                />
+              </label>
+              <label>
+                <LabelTitle
+                  text="Описание проекта"
+                  hint="Технический комментарий или заметки по заказу."
+                />
+                <textarea
+                  rows={3}
+                  value={projectDescriptionDraft}
+                  onChange={(event) => setProjectDescriptionDraft(event.target.value)}
+                  placeholder="Размер стены, требования к сборке и др."
+                />
+              </label>
+              <label>
+                <LabelTitle
+                  text="Название версии"
+                  hint="Как назвать сохраняемую генерацию (если пусто, система подставит имя автоматически)."
+                />
+                <input
+                  type="text"
+                  value={generationNameDraft}
+                  onChange={(event) => setGenerationNameDraft(event.target.value)}
+                  placeholder="Например: 20 цветов, теплая затирка"
+                />
+              </label>
+              <label>
+                <LabelTitle
+                  text="Комментарий к версии"
+                  hint="Что изменилось в этой версии по сравнению с прошлой."
+                />
+                <textarea
+                  rows={3}
+                  value={generationNoteDraft}
+                  onChange={(event) => setGenerationNoteDraft(event.target.value)}
+                  placeholder="Например: Заменили черный на темно-коричневый"
+                />
+              </label>
+              <div className="actions">
+                <button
+                  type="button"
+                  className="button-primary"
+                  onClick={onCreateProject}
+                  disabled={busy || !mosaicResult || !canEditProjects}
+                >
+                  Создать проект
+                </button>
+                <button
+                  type="button"
+                  className="button-secondary"
+                  onClick={onSaveGenerationToProject}
+                  disabled={busy || !mosaicResult || selectedProjectId === null || !canEditProjects}
+                >
+                  Сохранить версию в выбранный проект
+                </button>
+              </div>
+              {!mosaicResult && (
+                <p className="muted">
+                  Сейчас нет сгенерированной мозаики. Откройте вкладку «Генерация», чтобы получить сохраняемую версию.
+                </p>
+              )}
+            </div>
+          </article>
+
+          <article className="panel">
+            <h2>Список проектов</h2>
+            <div className="actions">
+              <button
+                type="button"
+                className="button-ghost"
+                onClick={() => void refreshProjects()}
+                disabled={busy || loadingProjects || !isAuthenticated}
+              >
+                {loadingProjects ? "Обновление..." : "Обновить список"}
+              </button>
+            </div>
+
+            {projects.length === 0 && (
+              <div className="placeholder">Пока нет сохраненных проектов.</div>
+            )}
+
+            {projects.length > 0 && (
+              <div className="usage-list project-list">
+                {projects.map((project) => (
+                  <div
+                    key={project.id}
+                    className={
+                      project.id === selectedProjectId
+                        ? "usage-row project-row project-row-active"
+                        : "usage-row project-row"
+                    }
+                  >
+                    <div>
+                      <strong>{project.name}</strong>
+                      <div className="muted">
+                        Версий: {project.generations_count} | Обновлен: {formatDateTime(project.updated_at)}
+                      </div>
+                    </div>
+                    <div className="row-actions">
+                      <button
+                        type="button"
+                        className="button-ghost"
+                        onClick={() => void onOpenProject(project.id)}
+                        disabled={busy}
+                      >
+                        Открыть
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {selectedProject && (
+              <div className="inline-editor">
+                <h3>Проект #{selectedProject.id}</h3>
+                <p className="muted">
+                  Создан: {formatDateTime(selectedProject.created_at)} | Активная версия:{" "}
+                  {selectedProject.active_generation_id ?? "-"}
+                </p>
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={onUpdateProjectMeta}
+                    disabled={busy || !canEditProjects}
+                  >
+                    Обновить название/описание
+                  </button>
+                </div>
+
+                <h3>История генераций</h3>
+                <div className="usage-list">
+                  {selectedProject.generations.map((generation) => (
+                    <div key={generation.id} className="usage-row">
+                      <div>
+                        <strong>
+                          v{generation.version}: {generation.name}
+                        </strong>
+                        <div className="muted">
+                          {formatDateTime(generation.created_at)}
+                          {generation.note ? ` | ${generation.note}` : ""}
+                        </div>
+                      </div>
+                      <div className="row-actions">
+                        <button
+                          type="button"
+                          className="button-ghost"
+                          onClick={() =>
+                            void onActivateProjectGeneration(selectedProject.id, generation.id)
+                          }
+                          disabled={busy}
+                        >
+                          Загрузить в студию
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="inline-editor">
+                  <h3>Shared-ссылки</h3>
+                  <p className="muted">
+                    Ссылка открывает выбранную версию проекта без авторизации. Можно задать срок действия и отозвать ссылку.
+                  </p>
+                  <div className="form-grid two-col">
+                    <label>
+                      Версия для ссылки
+                      <select
+                        value={shareGenerationId ?? ""}
+                        onChange={(event) =>
+                          setShareGenerationId(
+                            event.target.value.length > 0 ? Number(event.target.value) : null,
+                          )
+                        }
+                      >
+                        <option value="">Активная версия</option>
+                        {selectedProject.generations.map((generation) => (
+                          <option key={generation.id} value={generation.id}>
+                            v{generation.version}: {generation.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Срок действия (дней)
+                      <input
+                        type="number"
+                        min={1}
+                        max={3650}
+                        value={shareExpiresInDays}
+                        onChange={(event) => setShareExpiresInDays(Number(event.target.value))}
+                      />
+                    </label>
+                  </div>
+                  <div className="actions">
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      onClick={() => void onCreateProjectShare()}
+                      disabled={busy || !canEditProjects}
+                    >
+                      Создать shared-ссылку
+                    </button>
+                  </div>
+                  {projectShares.length === 0 ? (
+                    <div className="placeholder">Пока нет созданных shared-ссылок.</div>
+                  ) : (
+                    <div className="usage-list">
+                      {projectShares.map((share) => (
+                        <div key={share.id} className="usage-row">
+                          <div>
+                            <strong>
+                              #{share.id} | v{share.generation_version}: {share.generation_name}
+                            </strong>
+                            <div className="muted">
+                              Создана: {formatDateTime(share.created_at)} | Истекает:{" "}
+                              {formatDateTime(share.expires_at)}
+                              {share.is_revoked ? " | Отозвана" : ""}
+                            </div>
+                          </div>
+                          <div className="row-actions">
+                            <button
+                              type="button"
+                              className="button-ghost"
+                              onClick={() => void onCopyShareUrl(share.token)}
+                            >
+                              Копировать ссылку
+                            </button>
+                            {!share.is_revoked && (
+                              <button
+                                type="button"
+                                className="button-ghost danger"
+                                onClick={() => void onRevokeShare(share.id)}
+                                disabled={busy || !canEditProjects}
+                              >
+                                Отозвать
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="inline-editor">
+                  <h3>Предварительный заказ</h3>
+                  <p className="muted">
+                    Отправка на согласование с фиксацией версии, цены и состава мозаики.
+                  </p>
+                  <div className="form-grid two-col">
+                    <label>
+                      Версия проекта
+                      <select
+                        value={orderForm.generation_id ?? ""}
+                        onChange={(event) =>
+                          setOrderForm((current) => ({
+                            ...current,
+                            generation_id: event.target.value.length > 0 ? Number(event.target.value) : null,
+                          }))
+                        }
+                      >
+                        <option value="">Активная версия</option>
+                        {selectedProject.generations.map((generation) => (
+                          <option key={generation.id} value={generation.id}>
+                            v{generation.version}: {generation.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Контактное лицо
+                      <input
+                        type="text"
+                        value={orderForm.customer_name}
+                        onChange={(event) =>
+                          setOrderForm((current) => ({ ...current, customer_name: event.target.value }))
+                        }
+                        placeholder="Имя и фамилия"
+                      />
+                    </label>
+                    <label>
+                      E-mail
+                      <input
+                        type="email"
+                        value={orderForm.customer_email}
+                        onChange={(event) =>
+                          setOrderForm((current) => ({ ...current, customer_email: event.target.value }))
+                        }
+                        placeholder="client@example.com"
+                      />
+                    </label>
+                    <label>
+                      Телефон
+                      <input
+                        type="text"
+                        value={orderForm.customer_phone}
+                        onChange={(event) =>
+                          setOrderForm((current) => ({ ...current, customer_phone: event.target.value }))
+                        }
+                        placeholder="+7 ..."
+                      />
+                    </label>
+                    <label>
+                      Комментарий
+                      <textarea
+                        rows={2}
+                        value={orderForm.comment}
+                        onChange={(event) =>
+                          setOrderForm((current) => ({ ...current, comment: event.target.value }))
+                        }
+                        placeholder="Дополнительные пожелания"
+                      />
+                    </label>
+                  </div>
+                  <div className="actions">
+                    <button
+                      type="button"
+                      className="button-primary"
+                      onClick={() => void onCreateProjectOrder()}
+                      disabled={busy || !canEditProjects}
+                    >
+                      Отправить на согласование
+                    </button>
+                  </div>
+                  {projectOrders.length === 0 ? (
+                    <div className="placeholder">Предварительные заказы еще не отправлялись.</div>
+                  ) : (
+                    <div className="usage-list">
+                      {projectOrders.map((order) => (
+                        <div key={order.id} className="usage-row">
+                          <div>
+                            <strong>
+                              Заказ #{order.id} | {formatMoney(order.total_price, order.currency)}
+                            </strong>
+                            <div className="muted">
+                              Версия v{order.generation_version}: {order.generation_name} | {order.total_chips} чипов |{" "}
+                              {order.colors_used} цветов
+                            </div>
+                            <div className="muted">
+                              {formatDateTime(order.created_at)} | {order.customer_name}
+                              {order.customer_phone ? ` | ${order.customer_phone}` : ""}
+                              {order.customer_email ? ` | ${order.customer_email}` : ""}
+                            </div>
+                            {order.comment && <div className="muted">Комментарий: {order.comment}</div>}
+                            {order.status_comment && (
+                              <div className="muted">Комментарий статуса: {order.status_comment}</div>
+                            )}
+                          </div>
+                          <div className="row-actions order-actions">
+                            <span className="status-pill">{orderStatusLabel(order.status)}</span>
+                            {isAdmin && (
+                              <>
+                                <select
+                                  value={orderStatusDraftByOrder[order.id] ?? order.status}
+                                  onChange={(event) =>
+                                    setOrderStatusDraftByOrder((current) => ({
+                                      ...current,
+                                      [order.id]: event.target.value as ProjectOrderStatus,
+                                    }))
+                                  }
+                                >
+                                  {ORDER_STATUS_OPTIONS.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                                <input
+                                  type="text"
+                                  value={orderStatusCommentByOrder[order.id] ?? ""}
+                                  onChange={(event) =>
+                                    setOrderStatusCommentByOrder((current) => ({
+                                      ...current,
+                                      [order.id]: event.target.value,
+                                    }))
+                                  }
+                                  placeholder="Комментарий статуса"
+                                />
+                                <button
+                                  type="button"
+                                  className="button-secondary"
+                                  onClick={() => void onUpdateOrderStatus(order.id)}
+                                  disabled={busy}
+                                >
+                                  Обновить
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
           </article>
         </section>
@@ -2121,3 +4409,4 @@ export default function App() {
     </div>
   );
 }
+

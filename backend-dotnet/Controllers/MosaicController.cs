@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using Mozaika.Api.Contracts;
 using Mozaika.Api.Database;
 using Mozaika.Api.Options;
+using Mozaika.Api.Security;
 using Mozaika.Api.Services;
 
 namespace Mozaika.Api.Controllers;
@@ -13,8 +14,9 @@ namespace Mozaika.Api.Controllers;
 public sealed class MosaicController(
     MozaikaDbContext dbContext,
     MosaicService mosaicService,
+    MosaicExportService mosaicExportService,
     IOptions<MozaikaOptions> appOptions
-) : ControllerBase
+) : ApiControllerBase
 {
     [HttpPost("generate")]
     public async Task<ActionResult<MosaicGenerateResponse>> Generate(
@@ -32,6 +34,12 @@ public sealed class MosaicController(
         [FromForm(Name = "offset_y_mm")] double offsetYMm = 0
     )
     {
+        var authError = RequireAnyRole(AppRoles.Admin, AppRoles.Customer);
+        if (authError is not null)
+        {
+            return authError;
+        }
+
         if (image is null)
         {
             return BadRequest(new ApiError("Перед генерацией загрузите изображение."));
@@ -122,6 +130,97 @@ public sealed class MosaicController(
         }
     }
 
+    [HttpPost("replace-color")]
+    public async Task<ActionResult<MosaicGenerateResponse>> ReplaceColor([FromBody] MosaicReplaceColorRequest payload)
+    {
+        var authError = RequireAnyRole(AppRoles.Admin, AppRoles.Customer);
+        if (authError is not null)
+        {
+            return authError;
+        }
+
+        if (payload.FromColorId == payload.ToColorId)
+        {
+            return BadRequest(new ApiError("Исходный и целевой цвет совпадают. Выберите разные цвета."));
+        }
+
+        string normalizedGroutHex;
+        try
+        {
+            normalizedGroutHex = ColorMath.NormalizeHex(payload.GroutColorHex);
+        }
+        catch (ArgumentException ex)
+        {
+            return UnprocessableEntity(new ApiError(ex.Message));
+        }
+
+        var colors = await dbContext.Colors
+            .AsNoTracking()
+            .OrderBy(item => item.Id)
+            .ToListAsync();
+
+        if (colors.Count == 0)
+        {
+            return BadRequest(new ApiError("Палитра пуста. Добавьте хотя бы один цвет."));
+        }
+
+        try
+        {
+            var response = mosaicService.ReplaceColor(
+                gridColorIds: payload.GridColorIds,
+                availableColors: colors,
+                fromColorId: payload.FromColorId,
+                toColorId: payload.ToColorId,
+                fieldWidthMm: payload.FieldWidthMm,
+                fieldHeightMm: payload.FieldHeightMm,
+                cellSizeMm: payload.CellSizeMm,
+                gapMm: payload.GapMm,
+                offsetXMm: payload.OffsetXMm,
+                offsetYMm: payload.OffsetYMm,
+                groutColorHex: normalizedGroutHex,
+                requestedMaxColors: payload.RequestedMaxColors
+            );
+
+            return Ok(response);
+        }
+        catch (MosaicGenerationException ex)
+        {
+            return BadRequest(new ApiError(ex.Message));
+        }
+    }
+
+    [HttpPost("export/png")]
+    public Task<IActionResult> ExportPng([FromBody] MosaicExportRequest payload) =>
+        Export(payload, MosaicExportFormat.Png);
+
+    [HttpPost("export/jpeg")]
+    public Task<IActionResult> ExportJpeg([FromBody] MosaicExportRequest payload) =>
+        Export(payload, MosaicExportFormat.Jpeg);
+
+    [HttpPost("export/svg")]
+    public Task<IActionResult> ExportSvg([FromBody] MosaicExportRequest payload) =>
+        Export(payload, MosaicExportFormat.Svg);
+
+    [HttpPost("export/pdf")]
+    public Task<IActionResult> ExportPdf([FromBody] MosaicExportRequest payload) =>
+        Export(payload, MosaicExportFormat.Pdf);
+
+    [HttpPost("export/materials-csv")]
+    public Task<IActionResult> ExportMaterialsCsv([FromBody] MosaicExportRequest payload) =>
+        Export(payload, MosaicExportFormat.MaterialsCsv);
+
+    [HttpPost("export/grid-csv")]
+    public Task<IActionResult> ExportGridCsv([FromBody] MosaicExportRequest payload) =>
+        Export(payload, MosaicExportFormat.GridCsv);
+
+    [HttpPost("export/modules-csv")]
+    public Task<IActionResult> ExportModulesCsv([FromBody] MosaicExportRequest payload) =>
+        Export(payload, MosaicExportFormat.ModulesCsv);
+
+    [HttpPost("export/assembly-kit-pdf")]
+    public Task<IActionResult> ExportAssemblyKitPdf([FromBody] MosaicExportRequest payload) =>
+        Export(payload, MosaicExportFormat.AssemblyKitPdf);
+
     private static HashSet<int> ParseIds(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
@@ -139,6 +238,35 @@ public sealed class MosaicController(
         catch (Exception)
         {
             throw new ArgumentException("Поля include_color_ids/exclude_color_ids должны содержать целые id через запятую.");
+        }
+    }
+
+    private async Task<IActionResult> Export(MosaicExportRequest payload, MosaicExportFormat format)
+    {
+        var authError = RequireAnyRole(AppRoles.Admin, AppRoles.Customer);
+        if (authError is not null)
+        {
+            return authError;
+        }
+
+        var colors = await dbContext.Colors
+            .AsNoTracking()
+            .OrderBy(item => item.Id)
+            .ToListAsync();
+
+        if (colors.Count == 0)
+        {
+            return BadRequest(new ApiError("Палитра пуста. Добавьте хотя бы один цвет."));
+        }
+
+        try
+        {
+            var file = mosaicExportService.Export(format, payload, colors);
+            return File(file.Content, file.ContentType, file.FileName);
+        }
+        catch (MosaicGenerationException ex)
+        {
+            return BadRequest(new ApiError(ex.Message));
         }
     }
 

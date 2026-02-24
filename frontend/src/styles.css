@@ -56,6 +56,45 @@ p {
   font-size: 1.1rem;
 }
 
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1.4rem;
+}
+
+.login-panel {
+  width: min(520px, 94vw);
+  display: grid;
+  gap: 0.9rem;
+  padding: 1.4rem;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: linear-gradient(165deg, rgba(14, 31, 49, 0.96), rgba(7, 15, 25, 0.96));
+  box-shadow: 0 18px 42px rgba(4, 9, 15, 0.42);
+}
+
+.login-kicker {
+  margin: 0;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--accent-alt);
+}
+
+.login-title {
+  margin-bottom: 0.25rem;
+}
+
+.login-subtitle {
+  margin: 0;
+  color: var(--text-soft);
+}
+
+.login-demo small {
+  color: var(--text-soft);
+}
+
 .app-shell {
   width: min(1400px, 96vw);
   margin: 2rem auto;
@@ -96,6 +135,25 @@ p {
   border: 1px solid var(--line);
   border-radius: 14px;
   padding: 0.8rem 0.9rem;
+}
+
+.auth-card {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.auth-form {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.auth-inline {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.auth-inline small {
+  color: var(--text-soft);
 }
 
 .hero-metrics span {
@@ -309,6 +367,10 @@ textarea {
   gap: 0.5rem;
 }
 
+.export-actions {
+  flex-wrap: wrap;
+}
+
 .button-primary,
 .button-secondary,
 .button-ghost {
@@ -428,10 +490,83 @@ textarea {
   background: rgba(4, 10, 17, 0.65);
 }
 
+.preview-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.55rem;
+}
+
+.preview-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.preview-toolbar input[type="range"] {
+  width: 160px;
+}
+
+.preview-toolbar input[type="number"] {
+  width: 88px;
+}
+
+.positioning-info {
+  display: grid;
+  gap: 0.25rem;
+  align-content: end;
+  color: var(--text-soft);
+  font-size: 0.82rem;
+}
+
+.positioning-pad {
+  margin-top: 0.6rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.position-actions {
+  flex-wrap: wrap;
+}
+
+.preview-stage {
+  position: relative;
+  height: min(62vh, 560px);
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(4, 10, 17, 0.65);
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  cursor: grab;
+  touch-action: none;
+}
+
+.preview-stage.is-dragging {
+  cursor: grabbing;
+}
+
+.preview-image-transform {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  transform-origin: center center;
+  will-change: transform;
+  pointer-events: none;
+  user-select: none;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
 .stats-grid {
   margin-top: 0.7rem;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 0.5rem;
 }
 
@@ -475,6 +610,15 @@ textarea {
   color: var(--text-soft);
 }
 
+.project-row {
+  align-items: center;
+}
+
+.project-row-active {
+  border-color: rgba(79, 216, 216, 0.66);
+  background: rgba(12, 36, 55, 0.82);
+}
+
 .swatch {
   width: 16px;
   height: 16px;
@@ -514,6 +658,28 @@ th {
 .row-actions {
   display: flex;
   gap: 0.35rem;
+}
+
+.order-actions {
+  min-width: 260px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.order-actions select,
+.order-actions input[type="text"] {
+  min-width: 140px;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid rgba(79, 216, 216, 0.45);
+  color: var(--accent-alt);
+  font-size: 0.78rem;
+  white-space: nowrap;
 }
 
 .inline-editor {

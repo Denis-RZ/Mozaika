@@ -3,13 +3,14 @@ using Microsoft.EntityFrameworkCore;
 using Mozaika.Api.Contracts;
 using Mozaika.Api.Database;
 using Mozaika.Api.Database.Entities;
+using Mozaika.Api.Security;
 using Mozaika.Api.Services;
 
 namespace Mozaika.Api.Controllers;
 
 [ApiController]
 [Route("api/colors")]
-public sealed class ColorsController(MozaikaDbContext dbContext) : ControllerBase
+public sealed class ColorsController(MozaikaDbContext dbContext) : ApiControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<List<ColorReadResponse>>> List(
@@ -36,6 +37,12 @@ public sealed class ColorsController(MozaikaDbContext dbContext) : ControllerBas
     [HttpPost]
     public async Task<ActionResult<ColorReadResponse>> Create([FromBody] ColorCreateRequest payload)
     {
+        var authError = RequireAnyRole(AppRoles.Admin);
+        if (authError is not null)
+        {
+            return authError;
+        }
+
         var parsed = ValidateCreatePayload(payload);
         if (!parsed.IsValid)
         {
@@ -71,6 +78,12 @@ public sealed class ColorsController(MozaikaDbContext dbContext) : ControllerBas
     [HttpPost("bulk")]
     public async Task<ActionResult<List<ColorReadResponse>>> CreateBulk([FromBody] ColorBulkCreateRequest payload)
     {
+        var authError = RequireAnyRole(AppRoles.Admin);
+        if (authError is not null)
+        {
+            return authError;
+        }
+
         if (payload.Colors.Count == 0)
         {
             return BadRequest(new ApiError("Список для пакетного импорта пуст."));
@@ -124,6 +137,12 @@ public sealed class ColorsController(MozaikaDbContext dbContext) : ControllerBas
     [HttpPatch("{colorId:int}")]
     public async Task<ActionResult<ColorReadResponse>> Update(int colorId, [FromBody] ColorUpdateRequest payload)
     {
+        var authError = RequireAnyRole(AppRoles.Admin);
+        if (authError is not null)
+        {
+            return authError;
+        }
+
         if (colorId <= 0)
         {
             return BadRequest(new ApiError("Некорректный id цвета."));
@@ -202,6 +221,12 @@ public sealed class ColorsController(MozaikaDbContext dbContext) : ControllerBas
     [HttpDelete("{colorId:int}")]
     public async Task<ActionResult<ColorReadResponse>> Deactivate(int colorId)
     {
+        var authError = RequireAnyRole(AppRoles.Admin);
+        if (authError is not null)
+        {
+            return authError;
+        }
+
         if (colorId <= 0)
         {
             return BadRequest(new ApiError("Некорректный id цвета."));

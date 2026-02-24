@@ -19,13 +19,17 @@ if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
 
 $backendDir = Join-Path $ProjectRoot "backend-dotnet"
 $frontendDir = Join-Path $ProjectRoot "frontend"
-$dbFile = Join-Path $ProjectRoot "backend\mozaika.local.db"
+$dbFile = Join-Path $ProjectRoot "data\mozaika.local.db"
+$dbDir = Split-Path -Parent $dbFile
 
 if (-not (Test-Path $backendDir)) {
   throw "Backend (.NET) directory not found: $backendDir"
 }
 if (-not (Test-Path $frontendDir)) {
   throw "Frontend directory not found: $frontendDir"
+}
+if (-not (Test-Path $dbDir)) {
+  New-Item -ItemType Directory -Path $dbDir -Force | Out-Null
 }
 
 function Stop-PortProcess {

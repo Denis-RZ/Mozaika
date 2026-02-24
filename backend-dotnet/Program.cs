@@ -5,16 +5,23 @@ using Mozaika.Api.Contracts;
 using Mozaika.Api.Database;
 using Mozaika.Api.Database.Providers;
 using Mozaika.Api.Options;
+using Mozaika.Api.Security;
 using Mozaika.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.Configure<MozaikaOptions>(builder.Configuration.GetSection("Mozaika"));
+builder.Services.Configure<PricingOptions>(builder.Configuration.GetSection("Mozaika:Pricing"));
+builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection("Mozaika:Auth"));
 var initialDatabaseOptions = builder.Configuration.GetSection("Mozaika:Database").Get<DatabaseOptions>() ?? new DatabaseOptions();
 
 builder.Services.AddSingleton<IDatabaseProviderRegistry, DatabaseProviderRegistry>();
 builder.Services.AddSingleton(new RuntimeDatabaseSettingsStore(initialDatabaseOptions));
 builder.Services.AddScoped<MosaicService>();
+builder.Services.AddScoped<MosaicExportService>();
+builder.Services.AddScoped<ProjectStorageService>();
+builder.Services.AddScoped<AuthService>();
+builder.Services.AddScoped<ProjectWorkflowService>();
 
 builder.Services.AddDbContext<MozaikaDbContext>((serviceProvider, optionsBuilder) =>
 {
@@ -72,7 +79,8 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<MozaikaDbContext>();
-    await DbInitializer.SeedAsync(dbContext);
+    var authOptions = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<AuthOptions>>().Value;
+    await DbInitializer.SeedAsync(dbContext, authOptions);
 }
 
 if (app.Environment.IsDevelopment())
@@ -82,6 +90,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors();
+app.UseMiddleware<AuthenticationMiddleware>();
 app.MapControllers();
 app.Run();
 

@@ -5,6 +5,7 @@ using Mozaika.Api.Database;
 using Mozaika.Api.Database.Entities;
 using Mozaika.Api.Database.Providers;
 using Mozaika.Api.Options;
+using Mozaika.Api.Security;
 using Mozaika.Api.Services;
 
 namespace Mozaika.Api.Controllers;
@@ -15,11 +16,17 @@ public sealed class AdminController(
     MozaikaDbContext dbContext,
     RuntimeDatabaseSettingsStore runtimeDatabaseSettings,
     IDatabaseProviderRegistry databaseProviderRegistry
-) : ControllerBase
+) : ApiControllerBase
 {
     [HttpGet("settings")]
     public async Task<ActionResult<AdminSettingsReadResponse>> GetSettings()
     {
+        var authError = RequireAnyRole(AppRoles.Admin);
+        if (authError is not null)
+        {
+            return authError;
+        }
+
         var settings = await DbHelpers.GetOrCreateSettingsAsync(dbContext);
         return Ok(settings.ToRead());
     }
@@ -27,6 +34,12 @@ public sealed class AdminController(
     [HttpPut("settings")]
     public async Task<ActionResult<AdminSettingsReadResponse>> UpdateSettings([FromBody] AdminSettingsUpdateRequest payload)
     {
+        var authError = RequireAnyRole(AppRoles.Admin);
+        if (authError is not null)
+        {
+            return authError;
+        }
+
         if (!payload.HasAnyValue())
         {
             return BadRequest(new ApiError("Нужно передать хотя бы одно поле для обновления."));
@@ -83,6 +96,12 @@ public sealed class AdminController(
     [HttpGet("database")]
     public ActionResult<DatabaseConfigReadResponse> GetDatabaseConfig()
     {
+        var authError = RequireAnyRole(AppRoles.Admin);
+        if (authError is not null)
+        {
+            return authError;
+        }
+
         var options = runtimeDatabaseSettings.GetSnapshot();
         return Ok(BuildDatabaseConfigResponse(options));
     }
@@ -90,6 +109,12 @@ public sealed class AdminController(
     [HttpPut("database")]
     public async Task<ActionResult<DatabaseConfigReadResponse>> UpdateDatabaseConfig([FromBody] DatabaseConfigUpdateRequest payload)
     {
+        var authError = RequireAnyRole(AppRoles.Admin);
+        if (authError is not null)
+        {
+            return authError;
+        }
+
         var parsed = ParseDatabasePayload(payload);
         if (!parsed.IsValid)
         {
@@ -116,6 +141,12 @@ public sealed class AdminController(
     [HttpPost("database/test")]
     public async Task<ActionResult<DatabaseConfigTestResponse>> TestDatabaseConfig([FromBody] DatabaseConfigUpdateRequest payload)
     {
+        var authError = RequireAnyRole(AppRoles.Admin);
+        if (authError is not null)
+        {
+            return authError;
+        }
+
         var parsed = ParseDatabasePayload(payload);
         if (!parsed.IsValid)
         {
@@ -154,7 +185,7 @@ public sealed class AdminController(
         await using var testContext = new MozaikaDbContext(optionsBuilder.Options);
         if (createSchema)
         {
-            await DbInitializer.SeedAsync(testContext, seedDefaults);
+            await DbInitializer.SeedAsync(testContext, authOptions: null, seedDefaults: seedDefaults);
             return;
         }
 
@@ -198,6 +229,12 @@ public sealed class AdminController(
         [FromQuery(Name = "include_inactive")] bool includeInactive = false
     )
     {
+        var authError = RequireAnyRole(AppRoles.Admin);
+        if (authError is not null)
+        {
+            return authError;
+        }
+
         var query = dbContext.GroutColors
             .AsNoTracking()
             .OrderBy(item => item.Id)
@@ -218,6 +255,12 @@ public sealed class AdminController(
     [HttpPost("grout-colors")]
     public async Task<ActionResult<GroutColorReadResponse>> CreateGroutColor([FromBody] GroutColorCreateRequest payload)
     {
+        var authError = RequireAnyRole(AppRoles.Admin);
+        if (authError is not null)
+        {
+            return authError;
+        }
+
         var parsed = ValidateCreatePayload(payload);
         if (!parsed.IsValid)
         {
@@ -254,6 +297,12 @@ public sealed class AdminController(
         [FromBody] GroutColorUpdateRequest payload
     )
     {
+        var authError = RequireAnyRole(AppRoles.Admin);
+        if (authError is not null)
+        {
+            return authError;
+        }
+
         if (groutColorId <= 0)
         {
             return BadRequest(new ApiError("Некорректный id цвета заполнения."));
@@ -321,6 +370,12 @@ public sealed class AdminController(
     [HttpDelete("grout-colors/{groutColorId:int}")]
     public async Task<ActionResult<GroutColorReadResponse>> DeactivateGroutColor(int groutColorId)
     {
+        var authError = RequireAnyRole(AppRoles.Admin);
+        if (authError is not null)
+        {
+            return authError;
+        }
+
         if (groutColorId <= 0)
         {
             return BadRequest(new ApiError("Некорректный id цвета заполнения."));

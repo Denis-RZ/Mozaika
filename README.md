@@ -4,7 +4,7 @@ Full-stack mosaic generator:
 
 - `backend-dotnet/`: ASP.NET Core Web API + EF Core + universal DB provider abstraction.
 - `frontend/`: React + TypeScript UI for studio and admin workflows.
-- `backend/`: legacy FastAPI implementation (kept for reference).
+- `archive/`: archived legacy assets (including previous Python backend snapshot).
 - `docker-compose.yml`: production-like deployment with PostgreSQL, .NET backend, and nginx-served frontend.
 
 ## Quick Start (Docker)
@@ -59,8 +59,44 @@ Backend (.NET) variables:
 - `MOZAIKA__DATABASE__PROVIDER` (`sqlite` | `postgres` | `sqlserver`)
 - `MOZAIKA__DATABASE__CONNECTIONSTRING`
 - `MOZAIKA__MAXUPLOADMB`
+- `MOZAIKA__PRICING__CURRENCY` (default `RUB`)
+- `MOZAIKA__PRICING__PRICEPERCHIP`
+- `MOZAIKA__PRICING__PRICEPERUSEDCOLOR`
+- `MOZAIKA__PRICING__COMPLEXITYTHRESHOLDCOLORS`
+- `MOZAIKA__PRICING__EXTRAPRICEPERCOLORABOVETHRESHOLD`
+- `MOZAIKA__PRICING__GROUTPRICEPERSQUAREMETER`
+- `MOZAIKA__PRICING__SETUPPRICE`
+- `MOZAIKA__PRICING__MINORDERPRICE`
 - `MOZAIKA__CORSORIGINS__0` (for array items)
 
 Frontend optional variable:
 
 - `VITE_API_BASE_URL` (empty by default; use same-origin/proxy)
+
+## Auth (v1)
+
+Demo users from `backend-dotnet/appsettings.json`:
+
+- `admin / admin123` (`admin`)
+- `customer / customer123` (`customer`)
+- `viewer / viewer123` (`viewer`)
+
+## Planning
+
+- Roadmap draft (RU): `docs/roadmap-ru.md`
+- TZ progress tracker: `docs/tz-progress.md`
+
+## Encoding Check
+
+To verify there is no Russian text mojibake in UI/docs/backend source files:
+
+```bash
+node scripts/check-ru-mojibake.mjs
+```
+
+Frontend production build now runs this check automatically:
+
+```bash
+cd frontend
+npm run build
+```

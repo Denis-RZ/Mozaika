@@ -1,5 +1,7 @@
-﻿using Mozaika.Api.Contracts;
+﻿using Microsoft.Extensions.Options;
+using Mozaika.Api.Contracts;
 using Mozaika.Api.Database.Entities;
+using Mozaika.Api.Options;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
@@ -21,6 +23,13 @@ public sealed class MosaicGenerationException : Exception
 
 public sealed class MosaicService
 {
+    private readonly PricingOptions _pricingOptions;
+
+    public MosaicService(IOptions<PricingOptions> pricingOptions)
+    {
+        _pricingOptions = pricingOptions.Value;
+    }
+
     private sealed record PaletteColor(
         int Id,
         string Name,
@@ -38,6 +47,22 @@ public sealed class MosaicService
     {
         public required SourcePixel[,] Pixels { get; init; }
         public required ColorMath.Lab[,] Labs { get; init; }
+    }
+
+    private static PaletteColor ToPaletteColor(ColorEntity color)
+    {
+        var normalizedHex = ColorMath.NormalizeHex(color.RgbHex);
+        var rgb = ColorMath.HexToRgb(normalizedHex);
+        return new PaletteColor(
+            color.Id,
+            color.Name,
+            color.RalCode,
+            normalizedHex,
+            rgb.R,
+            rgb.G,
+            rgb.B,
+            ColorMath.RgbToLab(rgb.R, rgb.G, rgb.B)
+        );
     }
 
     public MosaicGenerateResponse Generate(
@@ -62,41 +87,12 @@ public sealed class MosaicService
 
         var (rows, columns, mosaicWidthMm, mosaicHeightMm) = ComputeGrid(fieldWidthMm, fieldHeightMm, cellSizeMm, gapMm);
 
-        if (offsetXMm < 0 || offsetYMm < 0)
-        {
-            throw new MosaicGenerationException("Смещение мозаики не может быть отрицательным.");
-        }
-
-        if (offsetXMm + mosaicWidthMm > fieldWidthMm + 1e-6)
-        {
-            throw new MosaicGenerationException("Смещение X выводит мозаику за границы поля.");
-        }
-
-        if (offsetYMm + mosaicHeightMm > fieldHeightMm + 1e-6)
-        {
-            throw new MosaicGenerationException("Смещение Y выводит мозаику за границы поля.");
-        }
-
         groutColorHex = ColorMath.NormalizeHex(groutColorHex);
         var source = PrepareSourcePixels(imageBytes, rows, columns);
 
         var activePalette = availableColors
             .Where(color => color.IsActive && !excludeColorIds.Contains(color.Id))
-            .Select(color =>
-            {
-                var normalizedHex = ColorMath.NormalizeHex(color.RgbHex);
-                var rgb = ColorMath.HexToRgb(normalizedHex);
-                return new PaletteColor(
-                    color.Id,
-                    color.Name,
-                    color.RalCode,
-                    normalizedHex,
-                    rgb.R,
-                    rgb.G,
-                    rgb.B,
-                    ColorMath.RgbToLab(rgb.R, rgb.G, rgb.B)
-                );
-            })
+            .Select(ToPaletteColor)
             .ToList();
 
         var paletteIds = activePalette.Select(item => item.Id).ToHashSet();
@@ -180,6 +176,7 @@ public sealed class MosaicService
             offsetYMm,
             groutColorHex
         );
+        var price = ComputePrice(totalCells, usedColors.Count, fieldWidthMm, fieldHeightMm);
 
         return new MosaicGenerateResponse
         {
@@ -196,9 +193,234 @@ public sealed class MosaicService
             GroutColorHex = groutColorHex,
             RequestedMaxColors = requestedMaxColors,
             ActualColorsUsed = usedColors.Count,
+            TotalChips = totalCells,
+            Price = price,
             UsedColors = usedColors,
             GridColorIds = gridColorIds,
             PreviewPngBase64 = previewPngBase64,
+        };
+    }
+
+    public MosaicGenerateResponse ReplaceColor(
+        int[][] gridColorIds,
+        IReadOnlyList<ColorEntity> availableColors,
+        int fromColorId,
+        int toColorId,
+        double fieldWidthMm,
+        double fieldHeightMm,
+        double cellSizeMm,
+        double gapMm,
+        double offsetXMm,
+        double offsetYMm,
+        string groutColorHex,
+        int? requestedMaxColors
+    )
+    {
+        if (fromColorId <= 0 || toColorId <= 0)
+        {
+            throw new MosaicGenerationException("Id цвета для замены должны быть положительными.");
+        }
+
+        if (fieldWidthMm <= 0 || fieldHeightMm <= 0)
+        {
+            throw new MosaicGenerationException("Ширина и высота поля должны быть больше нуля.");
+        }
+
+        if (cellSizeMm <= 0)
+        {
+            throw new MosaicGenerationException("Размер ячейки должен быть больше нуля.");
+        }
+
+        if (gapMm < 0)
+        {
+            throw new MosaicGenerationException("Расстояние между ячейками не может быть отрицательным.");
+        }
+
+        if (gridColorIds.Length == 0 || gridColorIds[0].Length == 0)
+        {
+            throw new MosaicGenerationException("Сетка мозаики не может быть пустой.");
+        }
+
+        var rows = gridColorIds.Length;
+        var columns = gridColorIds[0].Length;
+        for (var row = 0; row < rows; row++)
+        {
+            if (gridColorIds[row].Length != columns)
+            {
+                throw new MosaicGenerationException("Сетка мозаики должна быть прямоугольной.");
+            }
+        }
+
+        var colorsById = availableColors.ToDictionary(item => item.Id);
+        if (!colorsById.TryGetValue(toColorId, out var toColorEntity) || !toColorEntity.IsActive)
+        {
+            throw new MosaicGenerationException("Целевой цвет недоступен. Выберите активный цвет палитры.");
+        }
+
+        var paletteById = availableColors.ToDictionary(item => item.Id, ToPaletteColor);
+        var replacedGrid = new int[rows][];
+        var usedColorIds = new HashSet<int>();
+        var replacedAny = false;
+
+        for (var row = 0; row < rows; row++)
+        {
+            var nextRow = new int[columns];
+            for (var column = 0; column < columns; column++)
+            {
+                var colorId = gridColorIds[row][column];
+                if (colorId <= 0)
+                {
+                    throw new MosaicGenerationException("Сетка мозаики содержит некорректный id цвета.");
+                }
+
+                if (colorId == fromColorId)
+                {
+                    colorId = toColorId;
+                    replacedAny = true;
+                }
+
+                nextRow[column] = colorId;
+                usedColorIds.Add(colorId);
+            }
+
+            replacedGrid[row] = nextRow;
+        }
+
+        if (!replacedAny && fromColorId != toColorId)
+        {
+            throw new MosaicGenerationException("Исходный цвет отсутствует в текущей мозаике.");
+        }
+
+        var missingColorIds = usedColorIds
+            .Where(colorId => !paletteById.ContainsKey(colorId))
+            .OrderBy(colorId => colorId)
+            .ToArray();
+
+        if (missingColorIds.Length > 0)
+        {
+            throw new MosaicGenerationException($"В сетке мозаики найдены неизвестные id цветов: {string.Join(", ", missingColorIds)}.");
+        }
+
+        var orderedColorIds = usedColorIds.OrderBy(colorId => colorId).ToList();
+        var finalPalette = orderedColorIds.Select(colorId => paletteById[colorId]).ToList();
+        var paletteIndexById = orderedColorIds
+            .Select((colorId, index) => (colorId, index))
+            .ToDictionary(item => item.colorId, item => item.index);
+
+        var finalGrid = new int[rows, columns];
+        var counts = new int[finalPalette.Count];
+
+        for (var row = 0; row < rows; row++)
+        {
+            for (var column = 0; column < columns; column++)
+            {
+                var paletteIndex = paletteIndexById[replacedGrid[row][column]];
+                finalGrid[row, column] = paletteIndex;
+                counts[paletteIndex]++;
+            }
+        }
+
+        var totalCells = rows * columns;
+        var usedColors = new List<MosaicColorUsageResponse>();
+        for (var index = 0; index < finalPalette.Count; index++)
+        {
+            var cellCount = counts[index];
+            if (cellCount == 0)
+            {
+                continue;
+            }
+
+            var color = finalPalette[index];
+            usedColors.Add(new MosaicColorUsageResponse
+            {
+                Id = color.Id,
+                Name = color.Name,
+                RalCode = color.RalCode,
+                RgbHex = color.RgbHex,
+                Cells = cellCount,
+                Ratio = (double)cellCount / totalCells,
+            });
+        }
+
+        groutColorHex = ColorMath.NormalizeHex(groutColorHex);
+        var previewPngBase64 = RenderPreview(
+            finalGrid,
+            finalPalette,
+            fieldWidthMm,
+            fieldHeightMm,
+            cellSizeMm,
+            gapMm,
+            offsetXMm,
+            offsetYMm,
+            groutColorHex
+        );
+
+        var mosaicWidthMm = (columns * cellSizeMm) + ((columns - 1) * gapMm);
+        var mosaicHeightMm = (rows * cellSizeMm) + ((rows - 1) * gapMm);
+        var resolvedRequestedMaxColors = requestedMaxColors ?? Math.Max(1, usedColors.Count);
+        var price = ComputePrice(totalCells, usedColors.Count, fieldWidthMm, fieldHeightMm);
+
+        return new MosaicGenerateResponse
+        {
+            Rows = rows,
+            Columns = columns,
+            FieldWidthMm = fieldWidthMm,
+            FieldHeightMm = fieldHeightMm,
+            MosaicWidthMm = mosaicWidthMm,
+            MosaicHeightMm = mosaicHeightMm,
+            CellSizeMm = cellSizeMm,
+            GapMm = gapMm,
+            OffsetXMm = offsetXMm,
+            OffsetYMm = offsetYMm,
+            GroutColorHex = groutColorHex,
+            RequestedMaxColors = Math.Max(1, resolvedRequestedMaxColors),
+            ActualColorsUsed = usedColors.Count,
+            TotalChips = totalCells,
+            Price = price,
+            UsedColors = usedColors,
+            GridColorIds = replacedGrid,
+            PreviewPngBase64 = previewPngBase64,
+        };
+    }
+
+    private MosaicPriceBreakdownResponse ComputePrice(
+        int totalChips,
+        int actualColorsUsed,
+        double fieldWidthMm,
+        double fieldHeightMm
+    )
+    {
+        var areaSqM = Math.Max(0, (fieldWidthMm * fieldHeightMm) / 1_000_000.0);
+        var setupPrice = Math.Max(0, _pricingOptions.SetupPrice);
+        var chipsPrice = Math.Max(0, _pricingOptions.PricePerChip) * totalChips;
+        var colorsPrice = Math.Max(0, _pricingOptions.PricePerUsedColor) * actualColorsUsed;
+
+        var threshold = Math.Max(0, _pricingOptions.ComplexityThresholdColors);
+        var extraColors = Math.Max(0, actualColorsUsed - threshold);
+        var complexityPrice = extraColors * Math.Max(0, _pricingOptions.ExtraPricePerColorAboveThreshold);
+        var groutPrice = areaSqM * Math.Max(0, _pricingOptions.GroutPricePerSquareMeter);
+
+        var subtotalPrice = setupPrice + chipsPrice + colorsPrice + complexityPrice + groutPrice;
+        var minOrderPrice = Math.Max(0, _pricingOptions.MinOrderPrice);
+        var totalPrice = Math.Max(subtotalPrice, minOrderPrice);
+        var minOrderApplied = totalPrice > subtotalPrice;
+
+        return new MosaicPriceBreakdownResponse
+        {
+            Currency = string.IsNullOrWhiteSpace(_pricingOptions.Currency)
+                ? "RUB"
+                : _pricingOptions.Currency.Trim().ToUpperInvariant(),
+            TotalChips = totalChips,
+            AreaSqM = Math.Round(areaSqM, 4),
+            SetupPrice = Math.Round(setupPrice, 2),
+            ChipsPrice = Math.Round(chipsPrice, 2),
+            ColorsPrice = Math.Round(colorsPrice, 2),
+            ComplexityPrice = Math.Round(complexityPrice, 2),
+            GroutPrice = Math.Round(groutPrice, 2),
+            SubtotalPrice = Math.Round(subtotalPrice, 2),
+            MinOrderPrice = Math.Round(minOrderPrice, 2),
+            MinOrderApplied = minOrderApplied,
+            TotalPrice = Math.Round(totalPrice, 2),
         };
     }
 
@@ -225,8 +447,8 @@ public sealed class MosaicService
         }
 
         var pitch = cellSizeMm + gapMm;
-        var columns = (int)Math.Floor((fieldWidthMm + gapMm) / pitch);
-        var rows = (int)Math.Floor((fieldHeightMm + gapMm) / pitch);
+        var columns = (int)Math.Ceiling((fieldWidthMm + gapMm) / pitch);
+        var rows = (int)Math.Ceiling((fieldHeightMm + gapMm) / pitch);
 
         if (rows <= 0 || columns <= 0)
         {
