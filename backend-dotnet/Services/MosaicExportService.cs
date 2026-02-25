@@ -497,14 +497,14 @@ public sealed class MosaicExportService
             var contentTop = margin + MmToPoint(10);
 
             gfx.DrawString(
-                "Mozaika Export",
+                "Экспорт мозаики",
                 titleFont,
                 XBrushes.Black,
                 new XRect(margin, margin, mosaicPage.Width - (2 * margin), MmToPoint(8)),
                 XStringFormats.TopLeft
             );
             gfx.DrawString(
-                $"Field: {data.FieldWidthMm:0.#} x {data.FieldHeightMm:0.#} mm | Cell: {data.CellSizeMm:0.##} mm | Gap: {data.GapMm:0.##} mm",
+                $"Поле: {data.FieldWidthMm:0.#} x {data.FieldHeightMm:0.#} мм | Чип: {data.CellSizeMm:0.##} мм | Шов: {data.GapMm:0.##} мм",
                 metaFont,
                 XBrushes.Black,
                 new XRect(margin, margin + MmToPoint(5), mosaicPage.Width - (2 * margin), MmToPoint(8)),
@@ -622,7 +622,7 @@ public sealed class MosaicExportService
             gfx = XGraphics.FromPdfPage(page);
             y = margin;
             gfx.DrawString(
-                "Legend / Material List",
+                "Легенда / Ведомость материалов",
                 headingFont,
                 XBrushes.Black,
                 new XRect(margin, y, page.Width - (2 * margin), titleHeight),
@@ -653,7 +653,7 @@ public sealed class MosaicExportService
 
             var color = data.PaletteById[item.Key];
             var ratio = (double)item.Value / totalCells;
-            var rowText = $"{color.Name} | {color.RalCode} | {color.RgbHex} | chips: {item.Value} | {ratio:P1}";
+            var rowText = $"{color.Name} | {color.RalCode} | {color.RgbHex} | чипов: {item.Value} | {ratio:P1}";
 
             var swatchSize = MmToPoint(4.5);
             var swatchY = y + (lineHeight - swatchSize) / 2;
@@ -852,14 +852,14 @@ public sealed class MosaicExportService
         var mapHeight = page.Height - mapTop - margin;
 
         gfx.DrawString(
-            "Assembly Map (modules)",
+            "Карта сборки (модули)",
             titleFont,
             XBrushes.Black,
             new XRect(margin, margin, page.Width - (2 * margin), MmToPoint(7)),
             XStringFormats.TopLeft
         );
         gfx.DrawString(
-            $"Modules: {modules.Count} | Numbering from bottom-left, left-to-right | Start #: {data.ModuleStartNumber}",
+            $"Модулей: {modules.Count} | Нумерация снизу слева, слева направо | Стартовый №: {data.ModuleStartNumber}",
             textFont,
             XBrushes.Black,
             new XRect(margin, margin + MmToPoint(6), page.Width - (2 * margin), MmToPoint(6)),
@@ -930,21 +930,21 @@ public sealed class MosaicExportService
         var drawY = gridTop + ((gridHeight - drawHeight) / 2);
 
         gfx.DrawString(
-            $"Module #{module.Number}",
+            $"Модуль №{module.Number}",
             titleFont,
             XBrushes.Black,
             new XRect(margin, margin, page.Width - (2 * margin), MmToPoint(8)),
             XStringFormats.TopLeft
         );
         gfx.DrawString(
-            $"BottomRow={module.ModuleRowFromBottom}, LeftColumn={module.ModuleColumnFromLeft} | Chips: {columns} x {rows} | Mirror: {(data.MirrorHorizontal ? "yes" : "no")}",
+            $"Ряд снизу={module.ModuleRowFromBottom}, колонка слева={module.ModuleColumnFromLeft} | Чипов: {columns} x {rows} | Зеркально: {(data.MirrorHorizontal ? "да" : "нет")}",
             infoFont,
             XBrushes.Black,
             new XRect(margin, margin + MmToPoint(6), page.Width - (2 * margin), MmToPoint(8)),
             XStringFormats.TopLeft
         );
         gfx.DrawString(
-            "Rows are top->bottom in this sheet. Use color numbers and legend for chip picking.",
+            "На этом листе ряды идут сверху вниз. Для подбора чипов используйте номера цветов и легенду.",
             infoFont,
             XBrushes.Black,
             new XRect(margin, margin + MmToPoint(11), page.Width - (2 * margin), MmToPoint(8)),
@@ -1012,7 +1012,7 @@ public sealed class MosaicExportService
 
         gfx.DrawRectangle(XPens.LightGray, x, y, width, height);
         gfx.DrawString(
-            "Legend (number -> color)",
+            "Легенда (номер -> цвет)",
             new XFont("Arial", 8.5, XFontStyle.Bold),
             XBrushes.Black,
             new XRect(x + MmToPoint(1), y + MmToPoint(1), width - MmToPoint(2), MmToPoint(5)),

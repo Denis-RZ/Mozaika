@@ -1,0 +1,12 @@
+{
+  "name": "mozaika-presentation",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "node generate.mjs",
+    "open": "npm run generate && start Mozaika-client-presentation.pptx"
+  },
+  "dependencies": {
+    "pptxgenjs": "^3.12.0"
+  }
+}

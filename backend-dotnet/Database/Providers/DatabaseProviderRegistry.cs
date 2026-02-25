@@ -18,6 +18,7 @@ public sealed class DatabaseProviderRegistry : IDatabaseProviderRegistry
     {
         IDatabaseProvider[] providers = [
             new SqliteDatabaseProvider(),
+            new JsonDatabaseProvider(),
             new PostgresDatabaseProvider(),
             new SqlServerDatabaseProvider(),
             new MySqlDatabaseProvider(),

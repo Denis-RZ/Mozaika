@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Mozaika.Api.Contracts;
 using Mozaika.Api.Database;
 using Mozaika.Api.Database.Entities;
+using Mozaika.Api.Security;
 
 namespace Mozaika.Api.Services;
 
@@ -29,8 +30,30 @@ public sealed class ProjectStorageService(MozaikaDbContext dbContext)
         DictionaryKeyPolicy = JsonNamingPolicy.SnakeCaseLower,
     };
 
-    public async Task<List<ProjectListItemResponse>> ListProjectsAsync()
+    /// <param name="callerUsername">Current user's username.</param>
+    /// <param name="callerRole">Current user's role. Customers only see their own projects.</param>
+    /// <param name="page">1-based page number.</param>
+    /// <param name="limit">Items per page (1-100).</param>
+    public async Task<ProjectListPageResponse> ListProjectsAsync(
+        string callerUsername,
+        string callerRole,
+        int page,
+        int limit
+    )
     {
+        limit = Math.Clamp(limit, 1, 100);
+        page = Math.Max(1, page);
+
+        var baseQuery = dbContext.Projects.AsNoTracking();
+
+        // Customers only see their own projects
+        if (callerRole == AppRoles.Customer)
+        {
+            baseQuery = baseQuery.Where(item => item.OwnerUsername == callerUsername);
+        }
+
+        var total = await baseQuery.CountAsync();
+
         var generationStats = dbContext.ProjectGenerations
             .AsNoTracking()
             .GroupBy(item => item.ProjectId)
@@ -41,8 +64,8 @@ public sealed class ProjectStorageService(MozaikaDbContext dbContext)
                 LastGenerationAt = group.Max(item => item.CreatedAt),
             });
 
-        return await (
-            from project in dbContext.Projects.AsNoTracking()
+        var items = await (
+            from project in baseQuery
             join stats in generationStats on project.Id equals stats.ProjectId into statsJoin
             from stats in statsJoin.DefaultIfEmpty()
             orderby project.UpdatedAt descending
@@ -51,16 +74,28 @@ public sealed class ProjectStorageService(MozaikaDbContext dbContext)
                 Id = project.Id,
                 Name = project.Name,
                 Description = project.Description,
+                OwnerUsername = project.OwnerUsername,
                 CreatedAt = project.CreatedAt,
                 UpdatedAt = project.UpdatedAt,
                 GenerationsCount = stats == null ? 0 : stats.GenerationsCount,
                 ActiveGenerationId = project.ActiveGenerationId,
                 LastGenerationAt = stats == null ? null : stats.LastGenerationAt,
             }
-        ).ToListAsync();
+        )
+        .Skip((page - 1) * limit)
+        .Take(limit)
+        .ToListAsync();
+
+        return new ProjectListPageResponse
+        {
+            Items = items,
+            Total = total,
+            Page = page,
+            Limit = limit,
+        };
     }
 
-    public async Task<ProjectReadResponse> CreateProjectAsync(ProjectCreateRequest request)
+    public async Task<ProjectReadResponse> CreateProjectAsync(ProjectCreateRequest request, string ownerUsername)
     {
         var name = request.Name.Trim();
         if (name.Length < 2)
@@ -79,6 +114,7 @@ public sealed class ProjectStorageService(MozaikaDbContext dbContext)
         {
             Name = name,
             Description = description,
+            OwnerUsername = ownerUsername,
             SourceImageMimeType = normalizedImage.MimeType,
             SourceImageBytes = normalizedImage.Bytes,
             CreatedAt = utcNow,
@@ -107,9 +143,21 @@ public sealed class ProjectStorageService(MozaikaDbContext dbContext)
         return await GetProjectAsync(project.Id);
     }
 
-    public async Task<ProjectReadResponse> GetProjectAsync(int projectId)
+    public Task<ProjectReadResponse> GetProjectAsync(int projectId) =>
+        GetProjectAsync(projectId, callerUsername: null, callerRole: null);
+
+    public async Task<ProjectReadResponse> GetProjectAsync(
+        int projectId,
+        string? callerUsername,
+        string? callerRole
+    )
     {
-        var project = await FindProjectEntityAsync(projectId, asTracking: false);
+        var project = await FindProjectEntityAsync(
+            projectId,
+            asTracking: false,
+            callerUsername,
+            callerRole
+        );
         var generationSummaries = await dbContext.ProjectGenerations
             .AsNoTracking()
             .Where(item => item.ProjectId == project.Id)
@@ -133,9 +181,14 @@ public sealed class ProjectStorageService(MozaikaDbContext dbContext)
         return BuildProjectReadResponse(project, generationSummaries, activeGeneration);
     }
 
-    public async Task<ProjectReadResponse> UpdateProjectAsync(int projectId, ProjectUpdateRequest request)
+    public async Task<ProjectReadResponse> UpdateProjectAsync(
+        int projectId,
+        ProjectUpdateRequest request,
+        string callerUsername,
+        string callerRole
+    )
     {
-        var project = await FindProjectEntityAsync(projectId, asTracking: true);
+        var project = await FindProjectEntityAsync(projectId, asTracking: true, callerUsername, callerRole);
         if (request.Name is not null)
         {
             var name = request.Name.Trim();
@@ -153,16 +206,25 @@ public sealed class ProjectStorageService(MozaikaDbContext dbContext)
 
         project.UpdatedAt = DateTime.UtcNow;
         await dbContext.SaveChangesAsync();
-        return await GetProjectAsync(project.Id);
+        return await GetProjectAsync(project.Id, callerUsername, callerRole);
+    }
+
+    public async Task DeleteProjectAsync(int projectId, string callerUsername, string callerRole)
+    {
+        var project = await FindProjectEntityAsync(projectId, asTracking: true, callerUsername, callerRole);
+        dbContext.Projects.Remove(project);
+        await dbContext.SaveChangesAsync();
     }
 
     public async Task<ProjectGenerationReadResponse> SaveGenerationAsync(
         int projectId,
         ProjectSaveGenerationRequest request,
+        string callerUsername,
+        string callerRole,
         bool setAsActive = true
     )
     {
-        var project = await FindProjectEntityAsync(projectId, asTracking: true);
+        var project = await FindProjectEntityAsync(projectId, asTracking: true, callerUsername, callerRole);
         var normalized = NormalizeGenerationRequest(request, fallbackName: "Новая версия");
         var utcNow = DateTime.UtcNow;
 
@@ -205,7 +267,15 @@ public sealed class ProjectStorageService(MozaikaDbContext dbContext)
         return MapGenerationRead(generationEntity, normalized.Snapshot);
     }
 
-    public async Task<ProjectGenerationReadResponse> GetGenerationAsync(int projectId, int generationId)
+    public Task<ProjectGenerationReadResponse> GetGenerationAsync(int projectId, int generationId) =>
+        GetGenerationAsync(projectId, generationId, callerUsername: null, callerRole: null);
+
+    public async Task<ProjectGenerationReadResponse> GetGenerationAsync(
+        int projectId,
+        int generationId,
+        string? callerUsername,
+        string? callerRole
+    )
     {
         if (projectId <= 0)
         {
@@ -215,6 +285,8 @@ public sealed class ProjectStorageService(MozaikaDbContext dbContext)
         {
             throw new ProjectStorageException("Некорректный id генерации.");
         }
+
+        await FindProjectEntityAsync(projectId, asTracking: false, callerUsername, callerRole);
 
         var generation = await dbContext.ProjectGenerations
             .AsNoTracking()
@@ -234,9 +306,17 @@ public sealed class ProjectStorageService(MozaikaDbContext dbContext)
         return MapGenerationRead(generation, snapshot);
     }
 
-    public async Task<ProjectReadResponse> ActivateGenerationAsync(int projectId, int generationId)
+    public Task<ProjectReadResponse> ActivateGenerationAsync(int projectId, int generationId) =>
+        ActivateGenerationAsync(projectId, generationId, callerUsername: null, callerRole: null);
+
+    public async Task<ProjectReadResponse> ActivateGenerationAsync(
+        int projectId,
+        int generationId,
+        string? callerUsername,
+        string? callerRole
+    )
     {
-        var project = await FindProjectEntityAsync(projectId, asTracking: true);
+        var project = await FindProjectEntityAsync(projectId, asTracking: true, callerUsername, callerRole);
         var generationExists = await dbContext.ProjectGenerations
             .AsNoTracking()
             .AnyAsync(item => item.ProjectId == project.Id && item.Id == generationId);
@@ -249,10 +329,15 @@ public sealed class ProjectStorageService(MozaikaDbContext dbContext)
         project.ActiveGenerationId = generationId;
         project.UpdatedAt = DateTime.UtcNow;
         await dbContext.SaveChangesAsync();
-        return await GetProjectAsync(projectId);
+        return await GetProjectAsync(projectId, callerUsername, callerRole);
     }
 
-    private async Task<ProjectEntity> FindProjectEntityAsync(int projectId, bool asTracking)
+    private async Task<ProjectEntity> FindProjectEntityAsync(
+        int projectId,
+        bool asTracking,
+        string? callerUsername = null,
+        string? callerRole = null
+    )
     {
         if (projectId <= 0)
         {
@@ -267,6 +352,15 @@ public sealed class ProjectStorageService(MozaikaDbContext dbContext)
 
         var project = await query.FirstOrDefaultAsync(item => item.Id == projectId);
         if (project is null)
+        {
+            throw new ProjectStorageException("Проект не найден.", StatusCodes.Status404NotFound);
+        }
+
+        // Customers can only access their own projects.
+        // Legacy projects with null owner are treated as non-customer-owned.
+        if (callerRole == AppRoles.Customer &&
+            callerUsername is not null &&
+            !string.Equals(project.OwnerUsername, callerUsername, StringComparison.Ordinal))
         {
             throw new ProjectStorageException("Проект не найден.", StatusCodes.Status404NotFound);
         }

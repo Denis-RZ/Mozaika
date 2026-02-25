@@ -1,4 +1,4 @@
-﻿import type {
+import type {
   AdminSettingsRead,
   AuthLoginRequest,
   AuthLoginResponse,
@@ -17,6 +17,7 @@
   ProjectCreateRequest,
   ProjectGenerationRead,
   ProjectListItem,
+  ProjectListPage,
   ProjectOrderCreateRequest,
   ProjectOrderRead,
   ProjectOrderStatusUpdateRequest,
@@ -318,9 +319,25 @@ export async function exportMosaic(
   };
 }
 
-export async function fetchProjects(): Promise<ProjectListItem[]> {
-  const response = await apiFetch(`${API_BASE}/api/projects`);
-  return handleJsonResponse<ProjectListItem[]>(response);
+export async function fetchProjects(
+  page = 1,
+  limit = 20,
+): Promise<ProjectListPage> {
+  const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+  const response = await apiFetch(`${API_BASE}/api/projects?${params.toString()}`);
+  const raw = await handleJsonResponse<ProjectListPage>(response);
+  const items: ProjectListItem[] = raw.items;
+  return { ...raw, items };
+}
+
+export async function deleteProject(projectId: number): Promise<void> {
+  const response = await apiFetch(`${API_BASE}/api/projects/${projectId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok && response.status !== 204) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail);
+  }
 }
 
 export async function createProject(payload: ProjectCreateRequest): Promise<ProjectRead> {

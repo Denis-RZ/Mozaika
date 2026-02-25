@@ -3,6 +3,7 @@ using Mozaika.Api.Database.Entities;
 using Mozaika.Api.Options;
 using Mozaika.Api.Security;
 using Mozaika.Api.Services;
+using System.Data;
 
 namespace Mozaika.Api.Database;
 
@@ -208,6 +209,57 @@ public static class DbInitializer
         {
             await dbContext.Database.ExecuteSqlRawAsync(command);
         }
+
+        // Legacy sqlite databases may miss newer columns if table already existed before updates.
+        await EnsureSqliteColumnAsync(
+            dbContext,
+            tableName: "projects",
+            columnName: "owner_username",
+            columnDefinition: "TEXT NULL"
+        );
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_projects_owner_username ON projects(owner_username);"
+        );
+    }
+
+    private static async Task EnsureSqliteColumnAsync(
+        MozaikaDbContext dbContext,
+        string tableName,
+        string columnName,
+        string columnDefinition
+    )
+    {
+        await using var connection = dbContext.Database.GetDbConnection();
+        if (connection.State != ConnectionState.Open)
+        {
+            await connection.OpenAsync();
+        }
+
+        await using var checkCommand = connection.CreateCommand();
+        checkCommand.CommandText = $"PRAGMA table_info({tableName});";
+
+        var hasColumn = false;
+        await using (var reader = await checkCommand.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                var existingName = reader["name"]?.ToString();
+                if (string.Equals(existingName, columnName, StringComparison.OrdinalIgnoreCase))
+                {
+                    hasColumn = true;
+                    break;
+                }
+            }
+        }
+
+        if (hasColumn)
+        {
+            return;
+        }
+
+        await using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {columnDefinition};";
+        await alterCommand.ExecuteNonQueryAsync();
     }
 
     private static async Task SeedUsersAsync(MozaikaDbContext dbContext, AuthOptions? authOptions, DateTime utcNow)

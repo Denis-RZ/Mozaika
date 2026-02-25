@@ -19,6 +19,11 @@ public sealed class ProjectEntity
     [Column("description")]
     public string Description { get; set; } = string.Empty;
 
+    /// <summary>Username of the project owner. Null means legacy/admin-owned project.</summary>
+    [MaxLength(80)]
+    [Column("owner_username")]
+    public string? OwnerUsername { get; set; }
+
     [MaxLength(64)]
     [Column("source_image_mime_type")]
     public string SourceImageMimeType { get; set; } = string.Empty;

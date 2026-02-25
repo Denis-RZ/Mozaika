@@ -230,6 +230,7 @@ export interface ProjectListItem {
   id: number;
   name: string;
   description: string;
+  owner_username: string | null;
   created_at: string;
   updated_at: string;
   generations_count: number;
@@ -237,10 +238,18 @@ export interface ProjectListItem {
   last_generation_at: string | null;
 }
 
+export interface ProjectListPage {
+  items: ProjectListItem[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
 export interface ProjectRead {
   id: number;
   name: string;
   description: string;
+  owner_username: string | null;
   source_image_mime_type: string;
   source_image_base64: string;
   created_at: string;

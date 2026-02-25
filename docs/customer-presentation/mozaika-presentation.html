@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mozaika Studio - презентация для заказчика</title>
+  <style>
+    :root {
+      --bg: #f3f7f7;
+      --panel: #ffffff;
+      --ink: #0f2d2b;
+      --muted: #4e6663;
+      --brand-a: #0f766e;
+      --brand-b: #14532d;
+      --brand-c: #0b3d3a;
+      --line: #d7e4e2;
+      --ok: #0e9f6e;
+      --warn: #a16207;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Tahoma", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 500px at 80% -20%, #c4efe3 0%, transparent 60%),
+        radial-gradient(900px 400px at -10% 120%, #b7d4ff 0%, transparent 60%),
+        var(--bg);
+    }
+
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 28px 20px 48px;
+    }
+
+    .hero {
+      border-radius: 24px;
+      padding: 36px;
+      background: linear-gradient(135deg, var(--brand-a), var(--brand-b));
+      color: #f6fffd;
+      box-shadow: 0 16px 40px rgba(8, 34, 32, 0.23);
+    }
+
+    .hero h1 {
+      margin: 0 0 8px;
+      font-size: clamp(28px, 4vw, 48px);
+      line-height: 1.1;
+    }
+
+    .hero p {
+      margin: 0;
+      max-width: 900px;
+      font-size: clamp(15px, 2vw, 20px);
+      color: #dbf6ef;
+    }
+
+    .tagline {
+      margin-top: 16px;
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.14);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      font-size: 13px;
+      letter-spacing: 0.02em;
+    }
+
+    .section {
+      margin-top: 22px;
+      background: var(--panel);
+      border-radius: 20px;
+      border: 1px solid var(--line);
+      padding: 24px;
+      box-shadow: 0 6px 18px rgba(13, 47, 44, 0.06);
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: clamp(22px, 3vw, 30px);
+      color: var(--brand-c);
+    }
+
+    h3 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      color: var(--brand-c);
+    }
+
+    p {
+      margin: 0;
+      line-height: 1.5;
+      color: var(--muted);
+    }
+
+    .grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .metrics {
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      margin-top: 14px;
+    }
+
+    .metric {
+      border-radius: 14px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      background: #f7fbfb;
+    }
+
+    .metric .label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #5c7471;
+      margin-bottom: 6px;
+    }
+
+    .metric .value {
+      font-size: 22px;
+      color: #123937;
+      font-weight: 700;
+    }
+
+    .flow {
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      margin-top: 14px;
+    }
+
+    .step {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      background: #ffffff;
+    }
+
+    .step .n {
+      display: inline-flex;
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      color: #ffffff;
+      background: linear-gradient(135deg, var(--brand-a), #157f75);
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+
+    .media-grid {
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      margin-top: 14px;
+      align-items: start;
+    }
+
+    .media-card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: hidden;
+      background: #ffffff;
+    }
+
+    .media-card img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .media-caption {
+      padding: 10px 12px;
+      font-size: 14px;
+      color: #385451;
+      border-top: 1px solid var(--line);
+      background: #f7fbfb;
+    }
+
+    .files {
+      margin-top: 14px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+    }
+
+    .file {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 11px;
+      background: #ffffff;
+      font-size: 14px;
+    }
+
+    .file a {
+      color: var(--brand-a);
+      text-decoration: none;
+      font-weight: 600;
+      word-break: break-word;
+    }
+
+    .file small {
+      display: block;
+      margin-top: 4px;
+      color: #5d7572;
+    }
+
+    .note {
+      margin-top: 12px;
+      border-left: 4px solid var(--warn);
+      background: #fff9eb;
+      padding: 10px 12px;
+      border-radius: 8px;
+      color: #694f12;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+
+    .ok {
+      margin-top: 12px;
+      border-left: 4px solid var(--ok);
+      background: #ecfdf5;
+      padding: 10px 12px;
+      border-radius: 8px;
+      color: #065f46;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+
+    ul {
+      margin: 10px 0 0;
+      padding-left: 18px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    footer {
+      margin-top: 22px;
+      font-size: 13px;
+      color: #53706c;
+      text-align: center;
+    }
+
+    @media print {
+      body {
+        background: #ffffff;
+      }
+      .section, .hero {
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <h1>Mozaika Studio</h1>
+      <p>
+        Система для проектирования мозаики на реальное рабочее поле в метрах,
+        с автоматическим подбором цветов чипов, расчетом стоимости и экспортом
+        производственных файлов.
+      </p>
+      <div class="tagline">Демо-данные собраны автоматически из живого API</div>
+    </section>
+
+    <section class="section">
+      <h2>1. Что уже работает</h2>
+      <p>
+        В этом демо использован реальный результат генерации мозаики из тестового
+        изображения. Показатели ниже подставляются из <code>summary.json</code>.
+      </p>
+      <div class="grid metrics">
+        <article class="metric">
+          <div class="label">Размер сетки</div>
+          <div class="value"><span id="rows">117</span> x <span id="columns">184</span></div>
+        </article>
+        <article class="metric">
+          <div class="label">Всего чипов</div>
+          <div class="value" id="chips">21528</div>
+        </article>
+        <article class="metric">
+          <div class="label">Использовано цветов</div>
+          <div class="value" id="colors">7</div>
+        </article>
+        <article class="metric">
+          <div class="label">Итоговая цена</div>
+          <div class="value"><span id="price">38514</span> <span id="currency">RUB</span></div>
+        </article>
+      </div>
+      <div class="ok">
+        Все артефакты сгенерированы скриптом
+        <code>scripts/build-customer-presentation-assets.ps1</code>:
+        PNG, JPEG, SVG, PDF, ведомость материалов, координатная сетка и assembly kit.
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>2. Как работает сценарий заказчика</h2>
+      <div class="grid flow">
+        <article class="step">
+          <div class="n">Шаг 1</div>
+          <h3>Задать поле</h3>
+          <p>Ширина/высота рабочей зоны в мм, размер чипа и шва.</p>
+        </article>
+        <article class="step">
+          <div class="n">Шаг 2</div>
+          <h3>Загрузить изображение</h3>
+          <p>Исходник можно двигать, масштабировать и позиционировать в поле.</p>
+        </article>
+        <article class="step">
+          <div class="n">Шаг 3</div>
+          <h3>Сгенерировать мозаику</h3>
+          <p>Алгоритм выбирает ближайшие доступные цвета из базы палитры.</p>
+        </article>
+        <article class="step">
+          <div class="n">Шаг 4</div>
+          <h3>Оптимизировать цену</h3>
+          <p>Уменьшить число цветов и вручную заменить один цвет на другой.</p>
+        </article>
+        <article class="step">
+          <div class="n">Шаг 5</div>
+          <h3>Сохранить и отправить</h3>
+          <p>Сохранение проекта, история версий, отправка предварительного заказа.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>3. Наглядный результат генерации</h2>
+      <div class="grid media-grid">
+        <article class="media-card">
+          <img src="./assets/source-demo.png" alt="Исходное изображение" />
+          <div class="media-caption">Исходное изображение</div>
+        </article>
+        <article class="media-card">
+          <img src="./assets/mosaic-preview.png" alt="Мозаичный предпросмотр" />
+          <div class="media-caption">Сгенерированная мозаика (PNG экспорт)</div>
+        </article>
+      </div>
+      <div class="note">
+        Для печати укладчикам используется <code>assembly-kit.pdf</code> с
+        цветовой схемой, нумерацией модулей и поддержкой зеркального вывода.
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>4. Файлы, которые получает заказчик и производство</h2>
+      <div class="files">
+        <div class="file">
+          <a href="./assets/mosaic-preview.png">mosaic-preview.png</a>
+          <small>Предпросмотр для согласования</small>
+        </div>
+        <div class="file">
+          <a href="./assets/mosaic-preview.jpg">mosaic-preview.jpg</a>
+          <small>Альтернативный растровый формат</small>
+        </div>
+        <div class="file">
+          <a href="./assets/mosaic-preview.svg">mosaic-preview.svg</a>
+          <small>Вектор для масштабирования без потерь</small>
+        </div>
+        <div class="file">
+          <a href="./assets/mosaic-preview.pdf">mosaic-preview.pdf</a>
+          <small>Печатный PDF с легендой</small>
+        </div>
+        <div class="file">
+          <a href="./assets/materials.csv">materials.csv</a>
+          <small>Ведомость материалов: цвет -> количество</small>
+        </div>
+        <div class="file">
+          <a href="./assets/grid.csv">grid.csv</a>
+          <small>Координатная сетка по рядам/колонкам</small>
+        </div>
+        <div class="file">
+          <a href="./assets/modules.csv">modules.csv</a>
+          <small>Разбивка на монтажные модули</small>
+        </div>
+        <div class="file">
+          <a href="./assets/assembly-kit.pdf">assembly-kit.pdf</a>
+          <small>Комплект для сборщиков плитки</small>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>5. Что показать заказчику в живом интерфейсе</h2>
+      <ul>
+        <li>Позиционирование исходника на рабочем поле и генерация мозаики.</li>
+        <li>Снижение количества цветов и моментальный пересчет стоимости.</li>
+        <li>Ручная замена одного цвета на другой по всей мозаике.</li>
+        <li>Выбор цвета затирки и изменение визуального результата.</li>
+        <li>Сохранение проекта, повторное открытие и экспорт в нужном формате.</li>
+      </ul>
+    </section>
+
+    <footer>
+      Обновление демо-материалов:
+      <code>powershell -File scripts/build-customer-presentation-assets.ps1</code>
+    </footer>
+  </div>
+
+  <script>
+    (function () {
+      const fallback = {
+        rows: 117,
+        columns: 184,
+        total_chips: 21528,
+        actual_colors_used: 7,
+        total_price: 38514,
+        currency: "RUB"
+      };
+
+      const apply = function (data) {
+        const safe = Object.assign({}, fallback, data || {});
+        document.getElementById("rows").textContent = String(safe.rows);
+        document.getElementById("columns").textContent = String(safe.columns);
+        document.getElementById("chips").textContent = String(safe.total_chips);
+        document.getElementById("colors").textContent = String(safe.actual_colors_used);
+        document.getElementById("price").textContent = String(safe.total_price);
+        document.getElementById("currency").textContent = String(safe.currency || "RUB");
+      };
+
+      fetch("./assets/summary.json")
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) { apply(data); })
+        .catch(function () { apply(null); });
+    })();
+  </script>
+</body>
+</html>

@@ -52,3 +52,6 @@ tmp_*.png
 **/bin/
 **/obj/
 backend-dotnet/*.log
+release/
+e2e/test-results/
+e2e/playwright-report/

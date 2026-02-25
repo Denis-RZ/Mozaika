@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   activateProjectGeneration,
@@ -65,6 +65,8 @@ const tabs: Array<{ key: TabKey; label: string }> = [
   { key: "palette", label: "Палитра" },
   { key: "settings", label: "Настройки" },
 ];
+
+type StudioViewMode = "basic" | "advanced";
 
 const ORDER_STATUS_OPTIONS: Array<{ value: ProjectOrderStatus; label: string }> = [
   { value: "submitted", label: "Новый" },
@@ -218,10 +220,10 @@ function suggestColorMeta(hexValue: string): { name: string; ralCode: string } |
 
   const prefix =
     baseName !== "Белый" &&
-    baseName !== "Черный" &&
-    baseName !== "Серый" &&
-    hsv.v > 0.82 &&
-    hsv.s < 0.55
+      baseName !== "Черный" &&
+      baseName !== "Серый" &&
+      hsv.v > 0.82 &&
+      hsv.s < 0.55
       ? "Светлый "
       : baseName !== "Черный" && hsv.v < 0.35
         ? "Темный "
@@ -325,7 +327,20 @@ function defaultDbConnectionForm(provider: string): DbConnectionForm {
   switch (provider) {
     case "sqlite":
       return {
-        dataSource: "C:\\Users\\mikedell\\Mozaika\\data\\mozaika.local.db",
+        dataSource: "",
+        host: "",
+        port: "",
+        database: "",
+        username: "",
+        password: "",
+        sslMode: "Require",
+        encrypt: true,
+        trustServerCertificate: true,
+        extra: "",
+      };
+    case "json":
+      return {
+        dataSource: "../data/mozaika.storage.json",
         host: "",
         port: "",
         database: "",
@@ -459,11 +474,14 @@ function parseDbConnectionForm(provider: string, connectionString: string): DbCo
   const defaults = defaultDbConnectionForm(provider);
   const pairs = parseConnectionStringPairs(connectionString);
 
-  if (provider === "sqlite") {
+  if (provider === "sqlite" || provider === "json") {
     return {
       ...defaults,
-      dataSource: pickPairValue(pairs, ["Data Source", "Filename"]) || defaults.dataSource,
-      extra: extractExtraPairs(connectionString, ["Data Source", "Filename"]),
+      dataSource:
+        pickPairValue(pairs, ["Data Source", "Filename", "Path", "Json", "JsonFile"]) ||
+        connectionString.trim() ||
+        defaults.dataSource,
+      extra: extractExtraPairs(connectionString, ["Data Source", "Filename", "Path", "Json", "JsonFile"]),
     };
   }
 
@@ -563,7 +581,7 @@ function withExtra(base: string, extra: string): string {
 }
 
 function buildConnectionString(provider: string, form: DbConnectionForm): string {
-  if (provider === "sqlite") {
+  if (provider === "sqlite" || provider === "json") {
     return withExtra(`Data Source=${form.dataSource.trim()};`, form.extra);
   }
 
@@ -594,18 +612,19 @@ function buildConnectionString(provider: string, form: DbConnectionForm): string
 function providerConnectionHint(provider: string): string {
   switch (provider) {
     case "sqlite":
-      return "Пример SQLite: Data Source=C:\\\\Users\\\\mikedell\\\\Mozaika\\\\data\\\\mozaika.local.db";
+      return "SQLite example: Data Source=/path/to/mozaika.db";
+    case "json":
+      return "JSON example: Data Source=../data/mozaika.storage.json";
     case "postgres":
-      return "Пример PostgreSQL: Host=localhost;Port=5432;Database=mozaika;Username=postgres;Password=postgres";
+      return "PostgreSQL example: Host=localhost;Port=5432;Database=mozaika;Username=postgres;Password=postgres";
     case "sqlserver":
-      return "Пример SQL Server: Server=localhost;Database=mozaika;User Id=sa;Password=YourStrong!Passw0rd;TrustServerCertificate=True";
+      return "SQL Server example: Server=localhost;Database=mozaika;User Id=sa;Password=YourStrong!Passw0rd;TrustServerCertificate=True";
     case "mysql":
-      return "Пример MySQL: Server=localhost;Port=3306;Database=mozaika;User=root;Password=pass;";
+      return "MySQL example: Server=localhost;Port=3306;Database=mozaika;User=root;Password=pass;";
     default:
-      return "Укажите строку подключения выбранного провайдера.";
+      return "Specify a connection string for the selected provider.";
   }
 }
-
 function formatDateTime(value: string | null): string {
   if (!value) {
     return "-";
@@ -713,7 +732,24 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(() => {
     const stored = localStorage.getItem("mozaika_auth_token");
-    return stored && stored.trim().length > 0 ? stored.trim() : null;
+    if (!stored || stored.trim().length === 0) {
+      return null;
+    }
+    // Check if stored token has an associated expiry (saved alongside the token)
+    const expiry = localStorage.getItem("mozaika_auth_expires_at");
+    if (expiry) {
+      try {
+        if (new Date(expiry) <= new Date()) {
+          // Token already expired — clear storage proactively
+          localStorage.removeItem("mozaika_auth_token");
+          localStorage.removeItem("mozaika_auth_expires_at");
+          return null;
+        }
+      } catch {
+        // Invalid date string — ignore
+      }
+    }
+    return stored.trim();
   });
   const [authSession, setAuthSession] = useState<AuthSessionRead>({
     is_authenticated: false,
@@ -733,6 +769,7 @@ export default function App() {
   const [positionStepMm, setPositionStepMm] = useState(12);
   const [previewPanStepPx, setPreviewPanStepPx] = useState(24);
   const [previewZoomStep, setPreviewZoomStep] = useState(0.2);
+  const [studioViewMode, setStudioViewMode] = useState<StudioViewMode>("basic");
   const [previewDragging, setPreviewDragging] = useState(false);
   const previewDragRef = useRef<{
     pointerId: number;
@@ -752,6 +789,9 @@ export default function App() {
   const [exportIncludeColorNumbers, setExportIncludeColorNumbers] = useState(true);
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
+  const [projectsPage, setProjectsPage] = useState(1);
+  const [projectsTotal, setProjectsTotal] = useState(0);
+  const [projectsLimit] = useState(20);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
   const [selectedProject, setSelectedProject] = useState<ProjectRead | null>(null);
   const [projectNameDraft, setProjectNameDraft] = useState("");
@@ -810,7 +850,7 @@ export default function App() {
   });
   const [dbDraft, setDbDraft] = useState<DatabaseConfigUpdate>({
     provider: "sqlite",
-    connection_string: "Data Source=C:\\Users\\mikedell\\Mozaika\\data\\mozaika.local.db",
+    connection_string: "Data Source=../data/mozaika.local.db",
     echo: false,
     create_schema: true,
     seed_defaults: true,
@@ -848,6 +888,7 @@ export default function App() {
   const isAdmin = currentRole === "admin";
   const canEditProjects = currentRole === "admin" || currentRole === "customer";
   const canUseStudio = canEditProjects;
+  const isStudioAdvancedMode = studioViewMode === "advanced";
   const visibleTabs = useMemo(() => {
     return tabs.filter((item) => {
       if (item.key === "palette" || item.key === "settings") {
@@ -957,36 +998,43 @@ export default function App() {
     }
   }, [isAdmin]);
 
-  const refreshProjects = useCallback(async () => {
-    if (!isAuthenticated) {
-      setProjects([]);
-      setSelectedProjectId(null);
-      setSelectedProject(null);
-      setProjectShares([]);
-      setProjectOrders([]);
-      return;
-    }
+  const refreshProjects = useCallback(
+    async (page?: number) => {
+      if (!isAuthenticated) {
+        setProjects([]);
+        setProjectsTotal(0);
+        setSelectedProjectId(null);
+        setSelectedProject(null);
+        setProjectShares([]);
+        setProjectOrders([]);
+        return;
+      }
 
-    setLoadingProjects(true);
-    try {
-      const payload = await fetchProjects();
-      setProjects(payload);
-      setSelectedProjectId((current) => {
-        if (current !== null && payload.some((item) => item.id === current)) {
-          return current;
-        }
-        return payload[0]?.id ?? null;
-      });
-    } catch (requestError) {
-      setError(
-        requestError instanceof Error
-          ? requestError.message
-          : "Не удалось загрузить список проектов.",
-      );
-    } finally {
-      setLoadingProjects(false);
-    }
-  }, [isAuthenticated]);
+      const targetPage = page ?? projectsPage;
+      setLoadingProjects(true);
+      try {
+        const payload = await fetchProjects(targetPage, projectsLimit);
+        setProjects(payload.items);
+        setProjectsTotal(payload.total);
+        setProjectsPage(payload.page);
+        setSelectedProjectId((current) => {
+          if (current !== null && payload.items.some((item) => item.id === current)) {
+            return current;
+          }
+          return payload.items[0]?.id ?? null;
+        });
+      } catch (requestError) {
+        setError(
+          requestError instanceof Error
+            ? requestError.message
+            : "Не удалось загрузить список проектов.",
+        );
+      } finally {
+        setLoadingProjects(false);
+      }
+    },
+    [isAuthenticated, projectsPage, projectsLimit],
+  );
 
   const refreshProjectWorkflow = useCallback(
     async (projectId: number) => {
@@ -1087,6 +1135,7 @@ export default function App() {
           id: payload.project_id,
           name: payload.project_name,
           description: payload.project_description,
+          owner_username: null,
           source_image_mime_type: payload.source_image_mime_type,
           source_image_base64: payload.source_image_base64,
           created_at: new Date().toISOString(),
@@ -2521,6 +2570,33 @@ export default function App() {
         <section className="workspace">
           <article className="panel">
             <h2>Параметры генерации</h2>
+            <div className="studio-mode-switch" role="tablist" aria-label="Режим интерфейса студии">
+              <button
+                type="button"
+                className={studioViewMode === "basic" ? "mode-chip is-active" : "mode-chip"}
+                onClick={() => setStudioViewMode("basic")}
+              >
+                Базовый
+              </button>
+              <button
+                type="button"
+                className={studioViewMode === "advanced" ? "mode-chip is-active" : "mode-chip"}
+                onClick={() => setStudioViewMode("advanced")}
+              >
+                Профи
+              </button>
+            </div>
+            <p className="muted">
+              {isStudioAdvancedMode
+                ? "Режим Профи: доступны управление смещением, оценка сетки и точная настройка палитры."
+                : "Режим Базовый: только ключевые параметры, чтобы не перегружать экран."}
+            </p>
+
+            <label className="file-upload">
+              <input type="file" accept="image/*" onChange={onImageChange} />
+              <span>{imageFile ? imageFile.name : "Нажмите, чтобы выбрать изображение"}</span>
+            </label>
+
             <div className="form-grid two-col">
               <label>
                 <LabelTitle
@@ -2572,40 +2648,6 @@ export default function App() {
               </label>
               <label>
                 <LabelTitle
-                  text="Колонок (оценка)"
-                  hint="Целевое число колонок. После применения размер ячейки пересчитается."
-                />
-                <input
-                  type="number"
-                  min={1}
-                  value={gridDraft.columns}
-                  onChange={(event) =>
-                    setGridDraft((current) => ({
-                      ...current,
-                      columns: Number(event.target.value),
-                    }))
-                  }
-                />
-              </label>
-              <label>
-                <LabelTitle
-                  text="Рядов (оценка)"
-                  hint="Целевое число рядов. После применения размер ячейки пересчитается."
-                />
-                <input
-                  type="number"
-                  min={1}
-                  value={gridDraft.rows}
-                  onChange={(event) =>
-                    setGridDraft((current) => ({
-                      ...current,
-                      rows: Number(event.target.value),
-                    }))
-                  }
-                />
-              </label>
-              <label>
-                <LabelTitle
                   text="Макс. цветов"
                   hint="Верхний предел количества цветов плиток в мозаике. Это значение «до N», а не строго N."
                 />
@@ -2639,188 +2681,232 @@ export default function App() {
                   ))}
                 </select>
               </label>
-              <label>
-                <LabelTitle
-                  text="Смещение X (мм)"
-                  hint="Сдвиг мозаики по оси X. Допускаются отрицательные значения, лишняя часть обрезается по рабочему полю."
-                />
-                <input
-                  type="number"
-                  value={studioForm.offsetXmm}
-                  onChange={(event) => setStudioField("offsetXmm", Number(event.target.value))}
-                />
-              </label>
-              <label>
-                <LabelTitle
-                  text="Смещение Y (мм)"
-                  hint="Сдвиг мозаики по оси Y. Допускаются отрицательные значения, лишняя часть обрезается по рабочему полю."
-                />
-                <input
-                  type="number"
-                  value={studioForm.offsetYmm}
-                  onChange={(event) => setStudioField("offsetYmm", Number(event.target.value))}
-                />
-              </label>
-              <label>
-                <LabelTitle
-                  text="Шаг позиционирования (мм)"
-                  hint="Шаг для кнопок сдвига и горячих клавиш стрелок. Shift+стрелка = крупный шаг, Alt+стрелка = точный шаг."
-                />
-                <input
-                  type="number"
-                  min={0.1}
-                  step={0.1}
-                  value={positionStepMm}
-                  onChange={(event) => setPositionStepMm(Math.max(0.1, Number(event.target.value)))}
-                />
-              </label>
-              <div className="positioning-info">
-                <span>
-                  Перекрытие по X/Y: {offsetGuides.overflowX.toFixed(1)} / {offsetGuides.overflowY.toFixed(1)} мм
-                </span>
-                <span>
-                  Рекомендованный шаг по сетке: {offsetGuides.pitchMm.toFixed(1)} мм
-                </span>
-              </div>
+              {isStudioAdvancedMode && (
+                <>
+                  <label>
+                    <LabelTitle
+                      text="Колонок (оценка)"
+                      hint="Целевое число колонок. После применения размер ячейки пересчитается."
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      value={gridDraft.columns}
+                      onChange={(event) =>
+                        setGridDraft((current) => ({
+                          ...current,
+                          columns: Number(event.target.value),
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    <LabelTitle
+                      text="Рядов (оценка)"
+                      hint="Целевое число рядов. После применения размер ячейки пересчитается."
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      value={gridDraft.rows}
+                      onChange={(event) =>
+                        setGridDraft((current) => ({
+                          ...current,
+                          rows: Number(event.target.value),
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    <LabelTitle
+                      text="Смещение X (мм)"
+                      hint="Сдвиг мозаики по оси X. Допускаются отрицательные значения, лишняя часть обрезается по рабочему полю."
+                    />
+                    <input
+                      type="number"
+                      value={studioForm.offsetXmm}
+                      onChange={(event) => setStudioField("offsetXmm", Number(event.target.value))}
+                    />
+                  </label>
+                  <label>
+                    <LabelTitle
+                      text="Смещение Y (мм)"
+                      hint="Сдвиг мозаики по оси Y. Допускаются отрицательные значения, лишняя часть обрезается по рабочему полю."
+                    />
+                    <input
+                      type="number"
+                      value={studioForm.offsetYmm}
+                      onChange={(event) => setStudioField("offsetYmm", Number(event.target.value))}
+                    />
+                  </label>
+                  <label>
+                    <LabelTitle
+                      text="Шаг позиционирования (мм)"
+                      hint="Шаг для кнопок сдвига и горячих клавиш стрелок. Shift+стрелка = крупный шаг, Alt+стрелка = точный шаг."
+                    />
+                    <input
+                      type="number"
+                      min={0.1}
+                      step={0.1}
+                      value={positionStepMm}
+                      onChange={(event) =>
+                        setPositionStepMm(Math.max(0.1, Number(event.target.value)))
+                      }
+                    />
+                  </label>
+                  <div className="positioning-info">
+                    <span>
+                      Перекрытие по X/Y: {offsetGuides.overflowX.toFixed(1)} / {offsetGuides.overflowY.toFixed(1)} мм
+                    </span>
+                    <span>
+                      Рекомендованный шаг по сетке: {offsetGuides.pitchMm.toFixed(1)} мм
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
-            <div className="positioning-pad">
-              <button
-                type="button"
-                className="button-ghost"
-                onClick={() => nudgeMosaicOffset(0, -positionStepMm)}
-                disabled={busy || !canUseStudio}
-              >
-                ↑
-              </button>
-              <button
-                type="button"
-                className="button-ghost"
-                onClick={() => nudgeMosaicOffset(-positionStepMm, 0)}
-                disabled={busy || !canUseStudio}
-              >
-                ←
-              </button>
-              <button
-                type="button"
-                className="button-ghost"
-                onClick={() => nudgeMosaicOffset(positionStepMm, 0)}
-                disabled={busy || !canUseStudio}
-              >
-                →
-              </button>
-              <button
-                type="button"
-                className="button-ghost"
-                onClick={() => nudgeMosaicOffset(0, positionStepMm)}
-                disabled={busy || !canUseStudio}
-              >
-                ↓
-              </button>
-              <button
-                type="button"
-                className="button-ghost"
-                onClick={() => setPositionStepMm(Number(offsetGuides.pitchMm.toFixed(1)))}
-                disabled={busy || !canUseStudio}
-              >
-                Шаг = сетка
-              </button>
-            </div>
-            <div className="actions position-actions">
-              <button
-                type="button"
-                className="button-secondary"
-                onClick={() => alignMosaicOffset("top-left")}
-                disabled={busy || !canUseStudio}
-              >
-                Левый верх
-              </button>
-              <button
-                type="button"
-                className="button-secondary"
-                onClick={() => alignMosaicOffset("center")}
-                disabled={busy || !canUseStudio}
-              >
-                Центр
-              </button>
-              <button
-                type="button"
-                className="button-secondary"
-                onClick={() => alignMosaicOffset("bottom-right")}
-                disabled={busy || !canUseStudio}
-              >
-                Правый низ
-              </button>
-              <button
-                type="button"
-                className="button-ghost"
-                onClick={() => alignMosaicOffset("top-right")}
-                disabled={busy || !canUseStudio}
-              >
-                Правый верх
-              </button>
-              <button
-                type="button"
-                className="button-ghost"
-                onClick={() => alignMosaicOffset("bottom-left")}
-                disabled={busy || !canUseStudio}
-              >
-                Левый низ
-              </button>
-              <button
-                type="button"
-                className="button-ghost"
-                onClick={() => {
-                  setStudioField("offsetXmm", 0);
-                  setStudioField("offsetYmm", 0);
-                }}
-                disabled={busy || !canUseStudio}
-              >
-                Сброс 0/0
-              </button>
-            </div>
-            <div className="actions">
-              <button
-                type="button"
-                className="button-secondary"
-                onClick={applyGridDraft}
-                disabled={busy || !canUseStudio}
-              >
-                Применить оценку сетки
-              </button>
-            </div>
+            {isStudioAdvancedMode && (
+              <>
+                <div className="positioning-pad">
+                  <button
+                    type="button"
+                    className="button-ghost"
+                    onClick={() => nudgeMosaicOffset(0, -positionStepMm)}
+                    disabled={busy || !canUseStudio}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    className="button-ghost"
+                    onClick={() => nudgeMosaicOffset(-positionStepMm, 0)}
+                    disabled={busy || !canUseStudio}
+                  >
+                    ←
+                  </button>
+                  <button
+                    type="button"
+                    className="button-ghost"
+                    onClick={() => nudgeMosaicOffset(positionStepMm, 0)}
+                    disabled={busy || !canUseStudio}
+                  >
+                    →
+                  </button>
+                  <button
+                    type="button"
+                    className="button-ghost"
+                    onClick={() => nudgeMosaicOffset(0, positionStepMm)}
+                    disabled={busy || !canUseStudio}
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    className="button-ghost"
+                    onClick={() => setPositionStepMm(Number(offsetGuides.pitchMm.toFixed(1)))}
+                    disabled={busy || !canUseStudio}
+                  >
+                    Шаг = сетка
+                  </button>
+                </div>
+                <div className="actions position-actions">
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={() => alignMosaicOffset("top-left")}
+                    disabled={busy || !canUseStudio}
+                  >
+                    Левый верх
+                  </button>
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={() => alignMosaicOffset("center")}
+                    disabled={busy || !canUseStudio}
+                  >
+                    Центр
+                  </button>
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={() => alignMosaicOffset("bottom-right")}
+                    disabled={busy || !canUseStudio}
+                  >
+                    Правый низ
+                  </button>
+                  <button
+                    type="button"
+                    className="button-ghost"
+                    onClick={() => alignMosaicOffset("top-right")}
+                    disabled={busy || !canUseStudio}
+                  >
+                    Правый верх
+                  </button>
+                  <button
+                    type="button"
+                    className="button-ghost"
+                    onClick={() => alignMosaicOffset("bottom-left")}
+                    disabled={busy || !canUseStudio}
+                  >
+                    Левый низ
+                  </button>
+                  <button
+                    type="button"
+                    className="button-ghost"
+                    onClick={() => {
+                      setStudioField("offsetXmm", 0);
+                      setStudioField("offsetYmm", 0);
+                    }}
+                    disabled={busy || !canUseStudio}
+                  >
+                    Сброс 0/0
+                  </button>
+                </div>
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={applyGridDraft}
+                    disabled={busy || !canUseStudio}
+                  >
+                    Применить оценку сетки
+                  </button>
+                </div>
+              </>
+            )}
             <p className="muted">
               Для нормальной детализации ставьте больше 1 цвета. Сейчас: {studioForm.maxColors}.
             </p>
 
-            <label className="file-upload">
-              <input type="file" accept="image/*" onChange={onImageChange} />
-              <span>{imageFile ? imageFile.name : "Нажмите, чтобы выбрать изображение"}</span>
-            </label>
-
-            <h3>
-              Стратегия палитры <FieldHint text="Нажатие по цвету переключает режим: нейтрально -> включить -> исключить." />
-            </h3>
-            <p className="muted">
-              Нажимайте на цвет для переключения режима: нейтрально - включить - исключить.
-            </p>
-            <div className="color-chip-grid">
-              {activePalette.map((color) => (
-                <button
-                  type="button"
-                  key={color.id}
-                  className={`color-chip mode-${colorMode(color.id)}`}
-                  onClick={() => cycleColorMode(color.id)}
-                >
-                  <span style={{ backgroundColor: color.rgb_hex }} className="chip-swatch" />
-                  <span className="chip-meta">
-                    <strong>{color.name}</strong>
-                    <small>
-                      {color.ral_code} | {color.rgb_hex}
-                    </small>
-                  </span>
-                </button>
-              ))}
-            </div>
+            <details className="inline-editor fold-card" open={isStudioAdvancedMode}>
+              <summary>
+                Стратегия палитры
+                <FieldHint text="Нажатие по цвету переключает режим: нейтрально -> включить -> исключить." />
+              </summary>
+              <div className="fold-content">
+                <p className="muted">
+                  Нажимайте на цвет для переключения режима: нейтрально - включить - исключить.
+                </p>
+                <div className="color-chip-grid">
+                  {activePalette.map((color) => (
+                    <button
+                      type="button"
+                      key={color.id}
+                      className={`color-chip mode-${colorMode(color.id)}`}
+                      onClick={() => cycleColorMode(color.id)}
+                    >
+                      <span style={{ backgroundColor: color.rgb_hex }} className="chip-swatch" />
+                      <span className="chip-meta">
+                        <strong>{color.name}</strong>
+                        <small>
+                          {color.ral_code} | {color.rgb_hex}
+                        </small>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </details>
             <p className="muted">
               Кнопка ниже запускает генерацию и обновляет превью с учетом текущих параметров.
             </p>
@@ -2869,19 +2955,21 @@ export default function App() {
                       }
                     />
                   </label>
-                  <label>
-                    Шаг zoom
-                    <input
-                      type="number"
-                      min={0.01}
-                      max={2}
-                      step={0.01}
-                      value={previewZoomStep}
-                      onChange={(event) =>
-                        setPreviewZoomStep(Math.max(0.01, Number(event.target.value)))
-                      }
-                    />
-                  </label>
+                  {isStudioAdvancedMode && (
+                    <label>
+                      Шаг zoom
+                      <input
+                        type="number"
+                        min={0.01}
+                        max={2}
+                        step={0.01}
+                        value={previewZoomStep}
+                        onChange={(event) =>
+                          setPreviewZoomStep(Math.max(0.01, Number(event.target.value)))
+                        }
+                      />
+                    </label>
+                  )}
                   <button
                     type="button"
                     className="button-ghost"
@@ -2898,74 +2986,78 @@ export default function App() {
                   >
                     +
                   </button>
-                  <label>
-                    Pan шаг px
-                    <input
-                      type="number"
-                      min={1}
-                      step={1}
-                      value={previewPanStepPx}
-                      onChange={(event) =>
-                        setPreviewPanStepPx(Math.max(1, Math.round(Number(event.target.value))))
-                      }
-                    />
-                  </label>
-                  <label>
-                    Pan X
-                    <input
-                      type="number"
-                      step={1}
-                      value={previewPan.x}
-                      onChange={(event) =>
-                        setPreviewPan((current) => ({
-                          ...current,
-                          x: Number(event.target.value),
-                        }))
-                      }
-                    />
-                  </label>
-                  <label>
-                    Pan Y
-                    <input
-                      type="number"
-                      step={1}
-                      value={previewPan.y}
-                      onChange={(event) =>
-                        setPreviewPan((current) => ({
-                          ...current,
-                          y: Number(event.target.value),
-                        }))
-                      }
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    className="button-ghost"
-                    onClick={() => nudgePreviewPan(0, -previewPanStepPx)}
-                  >
-                    Pan ↑
-                  </button>
-                  <button
-                    type="button"
-                    className="button-ghost"
-                    onClick={() => nudgePreviewPan(-previewPanStepPx, 0)}
-                  >
-                    Pan ←
-                  </button>
-                  <button
-                    type="button"
-                    className="button-ghost"
-                    onClick={() => nudgePreviewPan(previewPanStepPx, 0)}
-                  >
-                    Pan →
-                  </button>
-                  <button
-                    type="button"
-                    className="button-ghost"
-                    onClick={() => nudgePreviewPan(0, previewPanStepPx)}
-                  >
-                    Pan ↓
-                  </button>
+                  {isStudioAdvancedMode && (
+                    <>
+                      <label>
+                        Pan шаг px
+                        <input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={previewPanStepPx}
+                          onChange={(event) =>
+                            setPreviewPanStepPx(Math.max(1, Math.round(Number(event.target.value))))
+                          }
+                        />
+                      </label>
+                      <label>
+                        Pan X
+                        <input
+                          type="number"
+                          step={1}
+                          value={previewPan.x}
+                          onChange={(event) =>
+                            setPreviewPan((current) => ({
+                              ...current,
+                              x: Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        Pan Y
+                        <input
+                          type="number"
+                          step={1}
+                          value={previewPan.y}
+                          onChange={(event) =>
+                            setPreviewPan((current) => ({
+                              ...current,
+                              y: Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="button-ghost"
+                        onClick={() => nudgePreviewPan(0, -previewPanStepPx)}
+                      >
+                        Pan ↑
+                      </button>
+                      <button
+                        type="button"
+                        className="button-ghost"
+                        onClick={() => nudgePreviewPan(-previewPanStepPx, 0)}
+                      >
+                        Pan ←
+                      </button>
+                      <button
+                        type="button"
+                        className="button-ghost"
+                        onClick={() => nudgePreviewPan(previewPanStepPx, 0)}
+                      >
+                        Pan →
+                      </button>
+                      <button
+                        type="button"
+                        className="button-ghost"
+                        onClick={() => nudgePreviewPan(0, previewPanStepPx)}
+                      >
+                        Pan ↓
+                      </button>
+                    </>
+                  )}
                   <button type="button" className="button-secondary" onClick={resetPreviewTransform}>
                     Reset view
                   </button>
@@ -3042,292 +3134,302 @@ export default function App() {
                   ))}
                 </div>
 
-                <div className="inline-editor">
-                  <h3>Расчет цены</h3>
-                  <div className="usage-list">
-                    <div className="usage-row">
-                      <div>База</div>
-                      <div className="usage-values">
-                        {formatMoney(mosaicResult.price.setup_price, mosaicResult.price.currency)}
+                <details className="inline-editor fold-card" open={isStudioAdvancedMode}>
+                  <summary>Расчет цены</summary>
+                  <div className="fold-content">
+                    <div className="usage-list">
+                      <div className="usage-row">
+                        <div>База</div>
+                        <div className="usage-values">
+                          {formatMoney(mosaicResult.price.setup_price, mosaicResult.price.currency)}
+                        </div>
                       </div>
-                    </div>
-                    <div className="usage-row">
-                      <div>Чипы ({mosaicResult.price.total_chips})</div>
-                      <div className="usage-values">
-                        {formatMoney(mosaicResult.price.chips_price, mosaicResult.price.currency)}
+                      <div className="usage-row">
+                        <div>Чипы ({mosaicResult.price.total_chips})</div>
+                        <div className="usage-values">
+                          {formatMoney(mosaicResult.price.chips_price, mosaicResult.price.currency)}
+                        </div>
                       </div>
-                    </div>
-                    <div className="usage-row">
-                      <div>Цвета ({mosaicResult.actual_colors_used})</div>
-                      <div className="usage-values">
-                        {formatMoney(mosaicResult.price.colors_price, mosaicResult.price.currency)}
+                      <div className="usage-row">
+                        <div>Цвета ({mosaicResult.actual_colors_used})</div>
+                        <div className="usage-values">
+                          {formatMoney(mosaicResult.price.colors_price, mosaicResult.price.currency)}
+                        </div>
                       </div>
-                    </div>
-                    <div className="usage-row">
-                      <div>Сложность (сверх порога цветов)</div>
-                      <div className="usage-values">
-                        {formatMoney(mosaicResult.price.complexity_price, mosaicResult.price.currency)}
+                      <div className="usage-row">
+                        <div>Сложность (сверх порога цветов)</div>
+                        <div className="usage-values">
+                          {formatMoney(mosaicResult.price.complexity_price, mosaicResult.price.currency)}
+                        </div>
                       </div>
-                    </div>
-                    <div className="usage-row">
-                      <div>Затирка ({mosaicResult.price.area_sq_m.toFixed(2)} м²)</div>
-                      <div className="usage-values">
-                        {formatMoney(mosaicResult.price.grout_price, mosaicResult.price.currency)}
+                      <div className="usage-row">
+                        <div>Затирка ({mosaicResult.price.area_sq_m.toFixed(2)} м²)</div>
+                        <div className="usage-values">
+                          {formatMoney(mosaicResult.price.grout_price, mosaicResult.price.currency)}
+                        </div>
                       </div>
-                    </div>
-                    <div className="usage-row">
-                      <div>Промежуточный итог</div>
-                      <div className="usage-values">
-                        {formatMoney(mosaicResult.price.subtotal_price, mosaicResult.price.currency)}
+                      <div className="usage-row">
+                        <div>Промежуточный итог</div>
+                        <div className="usage-values">
+                          {formatMoney(mosaicResult.price.subtotal_price, mosaicResult.price.currency)}
+                        </div>
                       </div>
-                    </div>
-                    <div className="usage-row">
-                      <div>Минимальный заказ</div>
-                      <div className="usage-values">
-                        {formatMoney(mosaicResult.price.min_order_price, mosaicResult.price.currency)}
+                      <div className="usage-row">
+                        <div>Минимальный заказ</div>
+                        <div className="usage-values">
+                          {formatMoney(mosaicResult.price.min_order_price, mosaicResult.price.currency)}
+                        </div>
                       </div>
-                    </div>
-                    <div className="usage-row">
-                      <div>
-                        <strong>Итого</strong>
-                        {mosaicResult.price.min_order_applied ? " (с учетом минимального заказа)" : ""}
-                      </div>
-                      <div className="usage-values">
-                        <strong>
-                          {formatMoney(mosaicResult.price.total_price, mosaicResult.price.currency)}
-                        </strong>
+                      <div className="usage-row">
+                        <div>
+                          <strong>Итого</strong>
+                          {mosaicResult.price.min_order_applied ? " (с учетом минимального заказа)" : ""}
+                        </div>
+                        <div className="usage-values">
+                          <strong>
+                            {formatMoney(mosaicResult.price.total_price, mosaicResult.price.currency)}
+                          </strong>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
+                </details>
 
-                <div className="inline-editor">
-                  <h3>Замена цвета</h3>
-                  <div className="form-grid two-col">
-                    <label>
-                      Исходный цвет
-                      <select
-                        value={replaceFromColorId ?? ""}
-                        onChange={(event) =>
-                          setReplaceFromColorId(
-                            event.target.value.length > 0 ? Number(event.target.value) : null,
-                          )
+                <details className="inline-editor fold-card" open={isStudioAdvancedMode}>
+                  <summary>Замена цвета</summary>
+                  <div className="fold-content">
+                    <div className="form-grid two-col">
+                      <label>
+                        Исходный цвет
+                        <select
+                          value={replaceFromColorId ?? ""}
+                          onChange={(event) =>
+                            setReplaceFromColorId(
+                              event.target.value.length > 0 ? Number(event.target.value) : null,
+                            )
+                          }
+                        >
+                          <option value="">Выберите цвет</option>
+                          {mosaicResult.used_colors.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.name} ({item.ral_code})
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Целевой цвет
+                        <select
+                          value={replaceToColorId ?? ""}
+                          onChange={(event) =>
+                            setReplaceToColorId(
+                              event.target.value.length > 0 ? Number(event.target.value) : null,
+                            )
+                          }
+                        >
+                          <option value="">Выберите цвет</option>
+                          {activePalette.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.name} ({item.ral_code})
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <div className="actions">
+                      <button
+                        type="button"
+                        className="button-secondary"
+                        onClick={onReplaceMosaicColor}
+                        disabled={
+                          busy ||
+                          !canUseStudio ||
+                          replaceFromColorId === null ||
+                          replaceToColorId === null
                         }
                       >
-                        <option value="">Выберите цвет</option>
-                        {mosaicResult.used_colors.map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.name} ({item.ral_code})
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Целевой цвет
-                      <select
-                        value={replaceToColorId ?? ""}
-                        onChange={(event) =>
-                          setReplaceToColorId(
-                            event.target.value.length > 0 ? Number(event.target.value) : null,
-                          )
-                        }
-                      >
-                        <option value="">Выберите цвет</option>
-                        {activePalette.map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.name} ({item.ral_code})
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-                  <div className="actions">
-                    <button
-                      type="button"
-                      className="button-secondary"
-                      onClick={onReplaceMosaicColor}
-                      disabled={
-                        busy ||
-                        !canUseStudio ||
-                        replaceFromColorId === null ||
-                        replaceToColorId === null
-                      }
-                    >
-                      Заменить во всей мозаике
-                    </button>
-                  </div>
-                </div>
-
-                <div className="inline-editor">
-                  <h3>Экспорт и печать</h3>
-                  <div className="form-grid two-col">
-                    <label>
-                      <LabelTitle
-                        text="DPI"
-                        hint="Разрешение для PNG/JPEG/PDF. Для черновой проверки 120-150, для печати обычно 200-300."
-                      />
-                      <input
-                        type="number"
-                        min={72}
-                        max={600}
-                        value={exportDpi}
-                        onChange={(event) => setExportDpi(Number(event.target.value))}
-                      />
-                    </label>
-                    <label>
-                      <LabelTitle
-                        text="Размер плитки (чипов по X)"
-                        hint="Сколько чипов по горизонтали входит в одну монтажную плитку."
-                      />
-                      <input
-                        type="number"
-                        min={1}
-                        max={256}
-                        value={moduleChipColumns}
-                        onChange={(event) => setModuleChipColumns(Number(event.target.value))}
-                      />
-                    </label>
-                    <label>
-                      <LabelTitle
-                        text="Размер плитки (чипов по Y)"
-                        hint="Сколько чипов по вертикали входит в одну монтажную плитку."
-                      />
-                      <input
-                        type="number"
-                        min={1}
-                        max={256}
-                        value={moduleChipRows}
-                        onChange={(event) => setModuleChipRows(Number(event.target.value))}
-                      />
-                    </label>
-                    <label>
-                      <LabelTitle
-                        text="Стартовый номер плитки"
-                        hint="Нумерация модулей идет снизу-слева по горизонтали, начиная с этого номера."
-                      />
-                      <input
-                        type="number"
-                        min={1}
-                        value={moduleStartNumber}
-                        onChange={(event) => setModuleStartNumber(Number(event.target.value))}
-                      />
-                    </label>
-                    <label className="checkbox">
-                      <input
-                        type="checkbox"
-                        checked={exportMirrorHorizontal}
-                        onChange={(event) => setExportMirrorHorizontal(event.target.checked)}
-                      />
-                      Зеркалить по горизонтали
-                    </label>
-                    <label className="checkbox">
-                      <input
-                        type="checkbox"
-                        checked={exportIncludeLegend}
-                        onChange={(event) => setExportIncludeLegend(event.target.checked)}
-                      />
-                      Добавлять легенду в PDF
-                    </label>
-                    <label className="checkbox">
-                      <input
-                        type="checkbox"
-                        checked={exportIncludeColorNumbers}
-                        onChange={(event) => setExportIncludeColorNumbers(event.target.checked)}
-                      />
-                      Печатать номера цветов в ячейках
-                    </label>
-                  </div>
-                  {moduleEstimate && (
-                    <div className="stats-grid">
-                      <div>
-                        <span>Плиток по X</span>
-                        <strong>{moduleEstimate.modulesX}</strong>
-                      </div>
-                      <div>
-                        <span>Плиток по Y</span>
-                        <strong>{moduleEstimate.modulesY}</strong>
-                      </div>
-                      <div>
-                        <span>Всего плиток</span>
-                        <strong>{moduleEstimate.modulesTotal}</strong>
-                      </div>
-                      <div>
-                        <span>Листов PDF-комплекта</span>
-                        <strong>{moduleEstimate.pagesTotal}</strong>
-                      </div>
+                        Заменить во всей мозаике
+                      </button>
                     </div>
-                  )}
-                  <div className="actions export-actions">
-                    <button
-                      type="button"
-                      className="button-secondary"
-                      onClick={() => void onExportMosaic("png")}
-                      disabled={busy || !canUseStudio}
-                    >
-                      Скачать PNG
-                    </button>
-                    <button
-                      type="button"
-                      className="button-secondary"
-                      onClick={() => void onExportMosaic("jpeg")}
-                      disabled={busy || !canUseStudio}
-                    >
-                      Скачать JPEG
-                    </button>
-                    <button
-                      type="button"
-                      className="button-secondary"
-                      onClick={() => void onExportMosaic("svg")}
-                      disabled={busy || !canUseStudio}
-                    >
-                      Скачать SVG
-                    </button>
-                    <button
-                      type="button"
-                      className="button-primary"
-                      onClick={() => void onExportMosaic("pdf")}
-                      disabled={busy || !canUseStudio}
-                    >
-                      Скачать PDF
-                    </button>
-                    <button
-                      type="button"
-                      className="button-ghost"
-                      onClick={() => void onExportMosaic("materials-csv")}
-                      disabled={busy || !canUseStudio}
-                    >
-                      Ведомость CSV
-                    </button>
-                    <button
-                      type="button"
-                      className="button-ghost"
-                      onClick={() => void onExportMosaic("grid-csv")}
-                      disabled={busy || !canUseStudio}
-                    >
-                      Координаты CSV
-                    </button>
-                    <button
-                      type="button"
-                      className="button-ghost"
-                      onClick={() => void onExportMosaic("modules-csv")}
-                      disabled={busy || !canUseStudio}
-                    >
-                      Плитки CSV
-                    </button>
-                    <button
-                      type="button"
-                      className="button-primary"
-                      onClick={() => void onExportMosaic("assembly-kit-pdf")}
-                      disabled={busy || !canUseStudio}
-                    >
-                      Комплект укладчика PDF
-                    </button>
                   </div>
-                  <p className="muted">
-                    Форматы экспорта: PNG/JPEG/SVG/PDF, CSV по материалам/координатам/плиткам и PDF-комплект укладчика.
-                    Нумерация плиток в комплекте: снизу-слева, слева-направо. Опция зеркалирования нужна для печати схемы «лицом вниз».
-                  </p>
-                </div>
+                </details>
+
+                <details className="inline-editor fold-card" open>
+                  <summary>Экспорт и печать</summary>
+                  <div className="fold-content">
+                    <div className="form-grid two-col">
+                      <label>
+                        <LabelTitle
+                          text="DPI"
+                          hint="Разрешение для PNG/JPEG/PDF. Для черновой проверки 120-150, для печати обычно 200-300."
+                        />
+                        <input
+                          type="number"
+                          min={72}
+                          max={600}
+                          value={exportDpi}
+                          onChange={(event) => setExportDpi(Number(event.target.value))}
+                        />
+                      </label>
+                      {isStudioAdvancedMode && (
+                        <>
+                          <label>
+                            <LabelTitle
+                              text="Размер плитки (чипов по X)"
+                              hint="Сколько чипов по горизонтали входит в одну монтажную плитку."
+                            />
+                            <input
+                              type="number"
+                              min={1}
+                              max={256}
+                              value={moduleChipColumns}
+                              onChange={(event) => setModuleChipColumns(Number(event.target.value))}
+                            />
+                          </label>
+                          <label>
+                            <LabelTitle
+                              text="Размер плитки (чипов по Y)"
+                              hint="Сколько чипов по вертикали входит в одну монтажную плитку."
+                            />
+                            <input
+                              type="number"
+                              min={1}
+                              max={256}
+                              value={moduleChipRows}
+                              onChange={(event) => setModuleChipRows(Number(event.target.value))}
+                            />
+                          </label>
+                          <label>
+                            <LabelTitle
+                              text="Стартовый номер плитки"
+                              hint="Нумерация модулей идет снизу-слева по горизонтали, начиная с этого номера."
+                            />
+                            <input
+                              type="number"
+                              min={1}
+                              value={moduleStartNumber}
+                              onChange={(event) => setModuleStartNumber(Number(event.target.value))}
+                            />
+                          </label>
+                        </>
+                      )}
+                      <label className="checkbox">
+                        <input
+                          type="checkbox"
+                          checked={exportMirrorHorizontal}
+                          onChange={(event) => setExportMirrorHorizontal(event.target.checked)}
+                        />
+                        Зеркалить по горизонтали
+                      </label>
+                      <label className="checkbox">
+                        <input
+                          type="checkbox"
+                          checked={exportIncludeLegend}
+                          onChange={(event) => setExportIncludeLegend(event.target.checked)}
+                        />
+                        Добавлять легенду в PDF
+                      </label>
+                      <label className="checkbox">
+                        <input
+                          type="checkbox"
+                          checked={exportIncludeColorNumbers}
+                          onChange={(event) => setExportIncludeColorNumbers(event.target.checked)}
+                        />
+                        Печатать номера цветов в ячейках
+                      </label>
+                    </div>
+                    {isStudioAdvancedMode && moduleEstimate && (
+                      <div className="stats-grid">
+                        <div>
+                          <span>Плиток по X</span>
+                          <strong>{moduleEstimate.modulesX}</strong>
+                        </div>
+                        <div>
+                          <span>Плиток по Y</span>
+                          <strong>{moduleEstimate.modulesY}</strong>
+                        </div>
+                        <div>
+                          <span>Всего плиток</span>
+                          <strong>{moduleEstimate.modulesTotal}</strong>
+                        </div>
+                        <div>
+                          <span>Листов PDF-комплекта</span>
+                          <strong>{moduleEstimate.pagesTotal}</strong>
+                        </div>
+                      </div>
+                    )}
+                    <div className="actions export-actions">
+                      <button
+                        type="button"
+                        className="button-secondary"
+                        onClick={() => void onExportMosaic("png")}
+                        disabled={busy || !canUseStudio}
+                      >
+                        Скачать PNG
+                      </button>
+                      <button
+                        type="button"
+                        className="button-secondary"
+                        onClick={() => void onExportMosaic("jpeg")}
+                        disabled={busy || !canUseStudio}
+                      >
+                        Скачать JPEG
+                      </button>
+                      <button
+                        type="button"
+                        className="button-secondary"
+                        onClick={() => void onExportMosaic("svg")}
+                        disabled={busy || !canUseStudio}
+                      >
+                        Скачать SVG
+                      </button>
+                      <button
+                        type="button"
+                        className="button-primary"
+                        onClick={() => void onExportMosaic("pdf")}
+                        disabled={busy || !canUseStudio}
+                      >
+                        Скачать PDF
+                      </button>
+                      <button
+                        type="button"
+                        className="button-ghost"
+                        onClick={() => void onExportMosaic("materials-csv")}
+                        disabled={busy || !canUseStudio}
+                      >
+                        Ведомость CSV
+                      </button>
+                      <button
+                        type="button"
+                        className="button-ghost"
+                        onClick={() => void onExportMosaic("grid-csv")}
+                        disabled={busy || !canUseStudio}
+                      >
+                        Координаты CSV
+                      </button>
+                      <button
+                        type="button"
+                        className="button-ghost"
+                        onClick={() => void onExportMosaic("modules-csv")}
+                        disabled={busy || !canUseStudio}
+                      >
+                        Плитки CSV
+                      </button>
+                      <button
+                        type="button"
+                        className="button-primary"
+                        onClick={() => void onExportMosaic("assembly-kit-pdf")}
+                        disabled={busy || !canUseStudio}
+                      >
+                        Комплект укладчика PDF
+                      </button>
+                    </div>
+                    <p className="muted">
+                      Форматы экспорта: PNG/JPEG/SVG/PDF, CSV по материалам/координатам/плиткам и PDF-комплект укладчика.
+                      Нумерация плиток в комплекте: снизу-слева, слева-направо. Опция зеркалирования нужна для печати схемы «лицом вниз».
+                    </p>
+                  </div>
+                </details>
               </>
             )}
             {!previewSource && (
@@ -3443,6 +3545,9 @@ export default function App() {
 
             {projects.length > 0 && (
               <div className="usage-list project-list">
+                <div className="muted" style={{ marginBottom: "0.5rem" }}>
+                  Всего: {projectsTotal}
+                </div>
                 {projects.map((project) => (
                   <div
                     key={project.id}
@@ -4061,7 +4166,7 @@ export default function App() {
               <label>
                 <LabelTitle
                   text="Провайдер БД"
-                  hint="Доступные варианты: sqlite, postgres, sqlserver, mysql."
+                  hint="Доступные варианты: sqlite, json, postgres, sqlserver, mysql."
                 />
                 <select
                   value={dbDraft.provider}
@@ -4074,11 +4179,11 @@ export default function App() {
                   ))}
                 </select>
               </label>
-              {dbDraft.provider === "sqlite" ? (
+              {dbDraft.provider === "sqlite" || dbDraft.provider === "json" ? (
                 <label>
                   <LabelTitle
                     text="Файл базы данных"
-                    hint="Путь к sqlite-файлу на сервере, например C:\\folder\\mozaika.db."
+                    hint="Path to server data file, e.g. C:\\folder\\mozaika.storage.json or C:\\folder\\mozaika.db."
                   />
                   <input
                     type="text"
@@ -4409,4 +4514,3 @@ export default function App() {
     </div>
   );
 }
-

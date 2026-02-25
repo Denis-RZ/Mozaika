@@ -59,6 +59,7 @@ public sealed class MozaikaDbContext(DbContextOptions<MozaikaDbContext> options)
         modelBuilder.Entity<ProjectEntity>(entity =>
         {
             entity.HasIndex(item => item.UpdatedAt);
+            entity.HasIndex(item => item.OwnerUsername);
             entity.Property(item => item.Id).ValueGeneratedOnAdd();
             entity.HasOne(item => item.ActiveGeneration)
                 .WithMany()

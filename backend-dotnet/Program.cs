@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Mozaika.Api.Contracts;
 using Mozaika.Api.Database;
+using Mozaika.Api.Database.Json;
 using Mozaika.Api.Database.Providers;
 using Mozaika.Api.Options;
 using Mozaika.Api.Security;
@@ -17,6 +18,8 @@ var initialDatabaseOptions = builder.Configuration.GetSection("Mozaika:Database"
 
 builder.Services.AddSingleton<IDatabaseProviderRegistry, DatabaseProviderRegistry>();
 builder.Services.AddSingleton(new RuntimeDatabaseSettingsStore(initialDatabaseOptions));
+builder.Services.AddSingleton<IJsonDatabaseSynchronizationService, JsonDatabaseSynchronizationService>();
+builder.Services.AddSingleton<JsonDatabaseSaveChangesInterceptor>();
 builder.Services.AddScoped<MosaicService>();
 builder.Services.AddScoped<MosaicExportService>();
 builder.Services.AddScoped<ProjectStorageService>();
@@ -33,6 +36,10 @@ builder.Services.AddDbContext<MozaikaDbContext>((serviceProvider, optionsBuilder
     {
         optionsBuilder.EnableSensitiveDataLogging();
     }
+
+    optionsBuilder.AddInterceptors(
+        serviceProvider.GetRequiredService<JsonDatabaseSaveChangesInterceptor>()
+    );
 });
 
 builder.Services
@@ -80,7 +87,11 @@ using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<MozaikaDbContext>();
     var authOptions = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<AuthOptions>>().Value;
+    var jsonDatabaseSync = scope.ServiceProvider.GetRequiredService<IJsonDatabaseSynchronizationService>();
+
+    await jsonDatabaseSync.ImportFromFileIfEnabledAsync(dbContext);
     await DbInitializer.SeedAsync(dbContext, authOptions);
+    await jsonDatabaseSync.PersistToFileIfEnabledAsync(dbContext);
 }
 
 if (app.Environment.IsDevelopment())

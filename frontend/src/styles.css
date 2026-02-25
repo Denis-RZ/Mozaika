@@ -180,6 +180,32 @@ p {
   font-size: 0.9rem;
 }
 
+.studio-mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(8, 19, 31, 0.72);
+}
+
+.mode-chip {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-soft);
+  padding: 0.4rem 0.7rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.mode-chip.is-active {
+  border-color: rgba(248, 184, 79, 0.5);
+  background: rgba(248, 184, 79, 0.2);
+  color: var(--text);
+}
+
 .tab {
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -688,6 +714,40 @@ th {
   border-radius: 14px;
   padding: 0.9rem;
   background: rgba(8, 19, 31, 0.72);
+}
+
+.fold-card {
+  padding: 0.65rem 0.8rem;
+}
+
+.fold-card > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+
+.fold-card > summary::-webkit-details-marker {
+  display: none;
+}
+
+.fold-card > summary::after {
+  content: "+";
+  color: var(--accent-alt);
+  font-size: 1rem;
+}
+
+.fold-card[open] > summary::after {
+  content: "−";
+}
+
+.fold-content {
+  margin-top: 0.65rem;
+  display: grid;
+  gap: 0.6rem;
 }
 
 @media (max-width: 1100px) {

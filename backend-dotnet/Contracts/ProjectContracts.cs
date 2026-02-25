@@ -78,6 +78,7 @@ public sealed class ProjectListItemResponse
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
+    public string? OwnerUsername { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
     public int GenerationsCount { get; set; }
@@ -90,6 +91,7 @@ public sealed class ProjectReadResponse
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
+    public string? OwnerUsername { get; set; }
     public string SourceImageMimeType { get; set; } = string.Empty;
     public string SourceImageBase64 { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
@@ -99,4 +101,12 @@ public sealed class ProjectReadResponse
     public DateTime? LastGenerationAt { get; set; }
     public ProjectGenerationReadResponse? ActiveGeneration { get; set; }
     public List<ProjectGenerationSummaryResponse> Generations { get; set; } = [];
+}
+
+public sealed class ProjectListPageResponse
+{
+    public List<ProjectListItemResponse> Items { get; set; } = [];
+    public int Total { get; set; }
+    public int Page { get; set; }
+    public int Limit { get; set; }
 }

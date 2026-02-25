@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Mozaika.Api.Contracts;
 using Mozaika.Api.Database;
 using Mozaika.Api.Database.Entities;
+using Mozaika.Api.Database.Json;
 using Mozaika.Api.Database.Providers;
 using Mozaika.Api.Options;
 using Mozaika.Api.Security;
@@ -175,6 +176,13 @@ public sealed class AdminController(
 
     private async Task VerifyDatabaseConnectionAsync(DatabaseOptions options, bool createSchema, bool seedDefaults)
     {
+        var isJsonProvider = JsonDatabaseFileStorage.IsJsonProvider(options);
+        if (isJsonProvider &&
+            !JsonDatabaseFileStorage.TryResolveFilePath(options, out _, out var jsonPathError))
+        {
+            throw new InvalidOperationException(jsonPathError);
+        }
+
         var optionsBuilder = new DbContextOptionsBuilder<MozaikaDbContext>();
         databaseProviderRegistry.Configure(optionsBuilder, options);
         if (options.Echo)
@@ -185,7 +193,25 @@ public sealed class AdminController(
         await using var testContext = new MozaikaDbContext(optionsBuilder.Options);
         if (createSchema)
         {
+            if (isJsonProvider)
+            {
+                await JsonDatabaseFileStorage.ImportAsync(testContext, options);
+            }
+
             await DbInitializer.SeedAsync(testContext, authOptions: null, seedDefaults: seedDefaults);
+
+            if (isJsonProvider)
+            {
+                await JsonDatabaseFileStorage.ExportAsync(testContext, options);
+            }
+
+            return;
+        }
+
+        if (isJsonProvider)
+        {
+            // If file exists it must be readable and importable.
+            await JsonDatabaseFileStorage.ImportAsync(testContext, options);
             return;
         }
 

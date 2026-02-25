@@ -13,9 +13,13 @@ public sealed class ProjectWorkflowService(
 {
     private const int MaxShareTokenGenerationAttempts = 5;
 
-    public async Task<List<ProjectShareReadResponse>> ListSharesAsync(int projectId)
+    public async Task<List<ProjectShareReadResponse>> ListSharesAsync(
+        int projectId,
+        string callerUsername,
+        string callerRole
+    )
     {
-        await projectStorageService.GetProjectAsync(projectId);
+        await projectStorageService.GetProjectAsync(projectId, callerUsername, callerRole);
         var shares = await dbContext.ProjectShares
             .AsNoTracking()
             .Where(item => item.ProjectId == projectId)
@@ -27,11 +31,13 @@ public sealed class ProjectWorkflowService(
     public async Task<ProjectShareReadResponse> CreateShareAsync(
         int projectId,
         ProjectShareCreateRequest request,
-        string createdBy
+        string createdBy,
+        string callerUsername,
+        string callerRole
     )
     {
-        var project = await projectStorageService.GetProjectAsync(projectId);
-        var generation = await ResolveGenerationAsync(project, request.GenerationId);
+        var project = await projectStorageService.GetProjectAsync(projectId, callerUsername, callerRole);
+        var generation = await ResolveGenerationAsync(project, request.GenerationId, callerUsername, callerRole);
         var utcNow = DateTime.UtcNow;
         var createdByNormalized = string.IsNullOrWhiteSpace(createdBy) ? "unknown" : createdBy.Trim();
 
@@ -77,9 +83,14 @@ public sealed class ProjectWorkflowService(
         );
     }
 
-    public async Task<ProjectShareReadResponse> RevokeShareAsync(int projectId, int shareId)
+    public async Task<ProjectShareReadResponse> RevokeShareAsync(
+        int projectId,
+        int shareId,
+        string callerUsername,
+        string callerRole
+    )
     {
-        await projectStorageService.GetProjectAsync(projectId);
+        await projectStorageService.GetProjectAsync(projectId, callerUsername, callerRole);
         var share = await dbContext.ProjectShares.FirstOrDefaultAsync(item =>
             item.ProjectId == projectId && item.Id == shareId);
 
@@ -138,9 +149,13 @@ public sealed class ProjectWorkflowService(
         };
     }
 
-    public async Task<List<ProjectOrderReadResponse>> ListOrdersAsync(int projectId)
+    public async Task<List<ProjectOrderReadResponse>> ListOrdersAsync(
+        int projectId,
+        string callerUsername,
+        string callerRole
+    )
     {
-        await projectStorageService.GetProjectAsync(projectId);
+        await projectStorageService.GetProjectAsync(projectId, callerUsername, callerRole);
         var orders = await dbContext.ProjectOrders
             .AsNoTracking()
             .Where(item => item.ProjectId == projectId)
@@ -152,11 +167,13 @@ public sealed class ProjectWorkflowService(
     public async Task<ProjectOrderReadResponse> CreateOrderAsync(
         int projectId,
         ProjectOrderCreateRequest request,
-        string submittedBy
+        string submittedBy,
+        string callerUsername,
+        string callerRole
     )
     {
-        var project = await projectStorageService.GetProjectAsync(projectId);
-        var generation = await ResolveGenerationAsync(project, request.GenerationId);
+        var project = await projectStorageService.GetProjectAsync(projectId, callerUsername, callerRole);
+        var generation = await ResolveGenerationAsync(project, request.GenerationId, callerUsername, callerRole);
         var customerName = request.CustomerName.Trim();
         if (string.IsNullOrWhiteSpace(customerName))
         {
@@ -206,10 +223,12 @@ public sealed class ProjectWorkflowService(
         int projectId,
         int orderId,
         ProjectOrderStatusUpdateRequest request,
-        string changedBy
+        string changedBy,
+        string callerUsername,
+        string callerRole
     )
     {
-        await projectStorageService.GetProjectAsync(projectId);
+        await projectStorageService.GetProjectAsync(projectId, callerUsername, callerRole);
         var status = request.Status.Trim().ToLowerInvariant();
         if (!ProjectOrderStatuses.IsValid(status))
         {
@@ -249,11 +268,21 @@ public sealed class ProjectWorkflowService(
         return MapOrder(order);
     }
 
-    private async Task<ProjectGenerationReadResponse> ResolveGenerationAsync(ProjectReadResponse project, int? generationId)
+    private async Task<ProjectGenerationReadResponse> ResolveGenerationAsync(
+        ProjectReadResponse project,
+        int? generationId,
+        string callerUsername,
+        string callerRole
+    )
     {
         if (generationId is not null)
         {
-            return await projectStorageService.GetGenerationAsync(project.Id, generationId.Value);
+            return await projectStorageService.GetGenerationAsync(
+                project.Id,
+                generationId.Value,
+                callerUsername,
+                callerRole
+            );
         }
 
         if (project.ActiveGeneration is not null)
@@ -267,7 +296,12 @@ public sealed class ProjectWorkflowService(
             throw new ProjectStorageException("В проекте нет сохраненных генераций.");
         }
 
-        return await projectStorageService.GetGenerationAsync(project.Id, firstGeneration.Id);
+        return await projectStorageService.GetGenerationAsync(
+            project.Id,
+            firstGeneration.Id,
+            callerUsername,
+            callerRole
+        );
     }
 
     private static ProjectShareReadResponse MapShare(ProjectShareEntity share) => new()

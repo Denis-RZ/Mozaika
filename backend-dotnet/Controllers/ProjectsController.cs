@@ -13,7 +13,10 @@ public sealed class ProjectsController(
 ) : ApiControllerBase
 {
     [HttpGet]
-    public async Task<ActionResult<List<ProjectListItemResponse>>> List()
+    public async Task<ActionResult<ProjectListPageResponse>> List(
+        [FromQuery(Name = "page")] int page = 1,
+        [FromQuery(Name = "limit")] int limit = 20
+    )
     {
         var authError = RequireAuthenticated();
         if (authError is not null)
@@ -23,7 +26,13 @@ public sealed class ProjectsController(
 
         try
         {
-            var payload = await projectStorageService.ListProjectsAsync();
+            var session = CurrentSession!;
+            var payload = await projectStorageService.ListProjectsAsync(
+                session.Username,
+                session.Role,
+                page,
+                limit
+            );
             return Ok(payload);
         }
         catch (ProjectStorageException ex)
@@ -43,7 +52,10 @@ public sealed class ProjectsController(
 
         try
         {
-            var response = await projectStorageService.CreateProjectAsync(payload);
+            var response = await projectStorageService.CreateProjectAsync(
+                payload,
+                CurrentSession?.Username ?? "unknown"
+            );
             return StatusCode(StatusCodes.Status201Created, response);
         }
         catch (ProjectStorageException ex)
@@ -63,7 +75,12 @@ public sealed class ProjectsController(
 
         try
         {
-            var response = await projectStorageService.GetProjectAsync(projectId);
+            var session = CurrentSession!;
+            var response = await projectStorageService.GetProjectAsync(
+                projectId,
+                session.Username,
+                session.Role
+            );
             return Ok(response);
         }
         catch (ProjectStorageException ex)
@@ -88,8 +105,39 @@ public sealed class ProjectsController(
 
         try
         {
-            var response = await projectStorageService.UpdateProjectAsync(projectId, payload);
+            var session = CurrentSession!;
+            var response = await projectStorageService.UpdateProjectAsync(
+                projectId,
+                payload,
+                session.Username,
+                session.Role
+            );
             return Ok(response);
+        }
+        catch (ProjectStorageException ex)
+        {
+            return StatusCode(ex.StatusCode, new ApiError(ex.Message));
+        }
+    }
+
+    [HttpDelete("{projectId:int}")]
+    public async Task<IActionResult> Delete(int projectId)
+    {
+        var authError = RequireAnyRole(AppRoles.Admin, AppRoles.Customer);
+        if (authError is not null)
+        {
+            return authError;
+        }
+
+        try
+        {
+            var session = CurrentSession!;
+            await projectStorageService.DeleteProjectAsync(
+                projectId,
+                session.Username,
+                session.Role
+            );
+            return NoContent();
         }
         catch (ProjectStorageException ex)
         {
@@ -111,7 +159,14 @@ public sealed class ProjectsController(
 
         try
         {
-            var response = await projectStorageService.SaveGenerationAsync(projectId, payload, setAsActive: true);
+            var session = CurrentSession!;
+            var response = await projectStorageService.SaveGenerationAsync(
+                projectId,
+                payload,
+                session.Username,
+                session.Role,
+                setAsActive: true
+            );
             return StatusCode(StatusCodes.Status201Created, response);
         }
         catch (ProjectStorageException ex)
@@ -131,7 +186,13 @@ public sealed class ProjectsController(
 
         try
         {
-            var response = await projectStorageService.GetGenerationAsync(projectId, generationId);
+            var session = CurrentSession!;
+            var response = await projectStorageService.GetGenerationAsync(
+                projectId,
+                generationId,
+                session.Username,
+                session.Role
+            );
             return Ok(response);
         }
         catch (ProjectStorageException ex)
@@ -151,7 +212,13 @@ public sealed class ProjectsController(
 
         try
         {
-            var response = await projectStorageService.ActivateGenerationAsync(projectId, generationId);
+            var session = CurrentSession!;
+            var response = await projectStorageService.ActivateGenerationAsync(
+                projectId,
+                generationId,
+                session.Username,
+                session.Role
+            );
             return Ok(response);
         }
         catch (ProjectStorageException ex)
@@ -171,7 +238,12 @@ public sealed class ProjectsController(
 
         try
         {
-            var response = await projectWorkflowService.ListSharesAsync(projectId);
+            var session = CurrentSession!;
+            var response = await projectWorkflowService.ListSharesAsync(
+                projectId,
+                session.Username,
+                session.Role
+            );
             return Ok(response);
         }
         catch (ProjectStorageException ex)
@@ -194,10 +266,13 @@ public sealed class ProjectsController(
 
         try
         {
+            var session = CurrentSession!;
             var response = await projectWorkflowService.CreateShareAsync(
                 projectId,
                 payload,
-                CurrentSession?.Username ?? "unknown"
+                session.Username,
+                session.Username,
+                session.Role
             );
             return StatusCode(StatusCodes.Status201Created, response);
         }
@@ -218,7 +293,13 @@ public sealed class ProjectsController(
 
         try
         {
-            var response = await projectWorkflowService.RevokeShareAsync(projectId, shareId);
+            var session = CurrentSession!;
+            var response = await projectWorkflowService.RevokeShareAsync(
+                projectId,
+                shareId,
+                session.Username,
+                session.Role
+            );
             return Ok(response);
         }
         catch (ProjectStorageException ex)
@@ -238,7 +319,12 @@ public sealed class ProjectsController(
 
         try
         {
-            var response = await projectWorkflowService.ListOrdersAsync(projectId);
+            var session = CurrentSession!;
+            var response = await projectWorkflowService.ListOrdersAsync(
+                projectId,
+                session.Username,
+                session.Role
+            );
             return Ok(response);
         }
         catch (ProjectStorageException ex)
@@ -261,10 +347,13 @@ public sealed class ProjectsController(
 
         try
         {
+            var session = CurrentSession!;
             var response = await projectWorkflowService.CreateOrderAsync(
                 projectId,
                 payload,
-                CurrentSession?.Username ?? "unknown"
+                session.Username,
+                session.Username,
+                session.Role
             );
             return StatusCode(StatusCodes.Status201Created, response);
         }
@@ -289,11 +378,14 @@ public sealed class ProjectsController(
 
         try
         {
+            var session = CurrentSession!;
             var response = await projectWorkflowService.UpdateOrderStatusAsync(
                 projectId,
                 orderId,
                 payload,
-                CurrentSession?.Username ?? "admin"
+                session.Username,
+                session.Username,
+                session.Role
             );
             return Ok(response);
         }

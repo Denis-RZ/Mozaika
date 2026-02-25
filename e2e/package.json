@@ -1,0 +1,11 @@
+{
+  "name": "mozaika-e2e",
+  "private": true,
+  "scripts": {
+    "presentation": "playwright test demo-presentation.spec.ts --headed --project=presentation",
+    "presentation:ui": "playwright test demo-presentation.spec.ts --ui --project=presentation"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}
