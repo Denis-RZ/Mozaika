@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mozaika Lite Demo</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; font-family: Segoe UI, Arial, sans-serif; background: #f5f6f8; color: #1f2937; }
+    .app { max-width: 1200px; margin: 16px auto; padding: 0 12px 20px; }
+    .card { background: #fff; border: 1px solid #d1d5db; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+    label { display: block; font-size: 12px; color: #374151; }
+    input, textarea, button { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px; border: 1px solid #c7ccd4; border-radius: 8px; }
+    textarea { min-height: 82px; resize: vertical; }
+    .actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 8px; }
+    button { cursor: pointer; background: #111827; color: #fff; border: 1px solid #111827; }
+    button.secondary { background: #fff; color: #111827; }
+    .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; font-size: 13px; }
+    .stat { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; }
+    .palette { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .chip { display: flex; align-items: center; gap: 6px; font-size: 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 999px; padding: 3px 8px; }
+    .dot { width: 12px; height: 12px; border-radius: 999px; border: 1px solid #9ca3af; }
+    .canvas-wrap { overflow: auto; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; }
+    canvas { display: block; max-width: 100%; height: auto; }
+    .hint { margin-top: 6px; font-size: 12px; color: #6b7280; }
+    @media (max-width: 900px) { .grid, .stats, .actions { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <h2>Mozaika Lite Demo (GitHub Pages)</h2>
+    <div class="card">
+      <div class="grid">
+        <label>Image
+          <input id="file" type="file" accept="image/*" />
+        </label>
+        <label>Field width (mm)
+          <input id="fieldW" type="number" min="100" value="2000" />
+        </label>
+        <label>Field height (mm)
+          <input id="fieldH" type="number" min="100" value="1200" />
+        </label>
+        <label>Chip size (mm)
+          <input id="chip" type="number" min="1" value="10" />
+        </label>
+        <label>Gap (mm)
+          <input id="gap" type="number" min="0" value="2" />
+        </label>
+        <label>Max colors
+          <input id="maxColors" type="number" min="2" max="64" value="16" />
+        </label>
+        <label>Zoom
+          <input id="zoom" type="number" step="0.1" min="0.2" max="5" value="1" />
+        </label>
+        <label>Pan X (chips)
+          <input id="panX" type="number" step="1" value="0" />
+        </label>
+        <label>Pan Y (chips)
+          <input id="panY" type="number" step="1" value="0" />
+        </label>
+        <label style="grid-column: span 4;">Palette HEX (comma/new line)
+          <textarea id="palette">#111111,#ffffff,#8b5e3c,#d4b48c,#4f5d73,#5f8d4e,#b22222,#f4c542,#d98f5f,#6c757d,#3c6e71,#2a9d8f,#264653,#7b2cbf,#ff7f11,#0077b6</textarea>
+        </label>
+      </div>
+      <div class="actions">
+        <button id="generate">Generate mosaic</button>
+        <button id="download" class="secondary">Download PNG</button>
+        <button id="reset" class="secondary">Reset view</button>
+      </div>
+      <div class="hint">No backend. Everything runs in browser memory.</div>
+    </div>
+
+    <div class="card">
+      <div class="stats">
+        <div class="stat"><b id="chipsX">0</b><div>chips X</div></div>
+        <div class="stat"><b id="chipsY">0</b><div>chips Y</div></div>
+        <div class="stat"><b id="chipsTotal">0</b><div>total chips</div></div>
+        <div class="stat"><b id="usedColors">0</b><div>used colors</div></div>
+      </div>
+      <div id="paletteOut" class="palette"></div>
+    </div>
+
+    <div class="card canvas-wrap">
+      <canvas id="canvas" width="1200" height="700"></canvas>
+    </div>
+  </div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    const els = ["file","fieldW","fieldH","chip","gap","maxColors","zoom","panX","panY","palette","generate","download","reset","chipsX","chipsY","chipsTotal","usedColors","paletteOut","canvas"].reduce((a,k)=>(a[k]=$(k),a),{});
+    const ctx = els.canvas.getContext("2d");
+    const src = new Image();
+    let last = null;
+    const defPal = ["#111111","#ffffff","#8b5e3c","#d4b48c","#4f5d73","#5f8d4e","#b22222","#f4c542","#d98f5f","#6c757d","#3c6e71","#2a9d8f","#264653","#7b2cbf","#ff7f11","#0077b6"];
+
+    const clamp = (v,min,max)=>Math.min(max,Math.max(min,v));
+    const hex = s=>{ const v=s.trim().replace(/^#/,""); return v.length===3?`#${v[0]}${v[0]}${v[1]}${v[1]}${v[2]}${v[2]}`:`#${v.slice(0,6)}`.toLowerCase(); };
+    const rgb = h=>{ const n=parseInt(h.slice(1),16); return [n>>16&255,n>>8&255,n&255]; };
+    const dist = (a,b)=>{ const dr=a[0]-b[0],dg=a[1]-b[1],db=a[2]-b[2]; return dr*dr+dg*dg+db*db; };
+    const parsePalette = () => {
+      const raw = els.palette.value.trim();
+      const list = (raw ? raw : defPal.join(",")).split(/[\s,;]+/).filter(Boolean).map(hex).filter(v=>/^#[0-9a-f]{6}$/.test(v));
+      return [...new Set(list)].slice(0,120);
+    };
+
+    function nearest(c, paletteRgb) {
+      let best=0,bv=1e18;
+      for (let i=0;i<paletteRgb.length;i++) { const d=dist(c,paletteRgb[i]); if (d<bv) { bv=d; best=i; } }
+      return best;
+    }
+
+    function getConfig() {
+      const fieldW = Math.max(100, +els.fieldW.value || 0);
+      const fieldH = Math.max(100, +els.fieldH.value || 0);
+      const chip = Math.max(1, +els.chip.value || 0);
+      const gap = Math.max(0, +els.gap.value || 0);
+      const maxColors = clamp(Math.floor(+els.maxColors.value || 16), 2, 64);
+      const zoom = clamp(+els.zoom.value || 1, 0.2, 5);
+      const panX = Math.round(+els.panX.value || 0);
+      const panY = Math.round(+els.panY.value || 0);
+      const chipsX = Math.max(1, Math.floor((fieldW + gap) / (chip + gap)));
+      const chipsY = Math.max(1, Math.floor((fieldH + gap) / (chip + gap)));
+      const palette = parsePalette();
+      return { fieldW, fieldH, chip, gap, maxColors, zoom, panX, panY, chipsX, chipsY, palette };
+    }
+
+    function updateStats(s) {
+      els.chipsX.textContent = s.chipsX;
+      els.chipsY.textContent = s.chipsY;
+      els.chipsTotal.textContent = (s.chipsX * s.chipsY).toLocaleString();
+      els.usedColors.textContent = s.used.length;
+      els.paletteOut.innerHTML = "";
+      s.used.forEach(x => {
+        const row = document.createElement("div");
+        row.className = "chip";
+        row.innerHTML = `<span class="dot" style="background:${x.hex}"></span>${x.hex} (${x.count})`;
+        els.paletteOut.appendChild(row);
+      });
+    }
+
+    function buildMosaic() {
+      if (!src.src) return alert("Upload image first");
+      const c = getConfig();
+      if (!c.palette.length) return alert("Palette is empty");
+      const pRgb = c.palette.map(rgb);
+
+      const temp = document.createElement("canvas");
+      temp.width = c.chipsX; temp.height = c.chipsY;
+      const t = temp.getContext("2d", { willReadFrequently: true });
+      t.fillStyle = "#000"; t.fillRect(0,0,temp.width,temp.height);
+
+      const base = Math.min(c.chipsX / src.width, c.chipsY / src.height);
+      const w = src.width * base * c.zoom, h = src.height * base * c.zoom;
+      const x = (c.chipsX - w) / 2 + c.panX, y = (c.chipsY - h) / 2 + c.panY;
+      t.drawImage(src, x, y, w, h);
+
+      const d = t.getImageData(0, 0, c.chipsX, c.chipsY).data;
+      const firstIdx = new Array(c.chipsX * c.chipsY);
+      const hit = new Map();
+      for (let i=0;i<firstIdx.length;i++) {
+        const ci = nearest([d[i*4],d[i*4+1],d[i*4+2]], pRgb);
+        firstIdx[i] = ci;
+        hit.set(ci, (hit.get(ci) || 0) + 1);
+      }
+
+      const top = [...hit.entries()].sort((a,b)=>b[1]-a[1]).slice(0,c.maxColors).map(v=>v[0]);
+      const sel = (top.length ? top : [0]).map(i=>({ hex:c.palette[i], rgb:pRgb[i], count:0 }));
+      const gapPx = Math.max(1, Math.round(c.gap * 2));
+      const cellPx = Math.max(2, Math.round(c.chip * 2));
+      const outW = c.chipsX * (cellPx + gapPx) + gapPx;
+      const outH = c.chipsY * (cellPx + gapPx) + gapPx;
+      els.canvas.width = outW; els.canvas.height = outH;
+      ctx.fillStyle = "#d9d9d9"; ctx.fillRect(0, 0, outW, outH);
+
+      for (let py=0; py<c.chipsY; py++) {
+        for (let px=0; px<c.chipsX; px++) {
+          const idx = py * c.chipsX + px;
+          const col = [d[idx*4], d[idx*4+1], d[idx*4+2]];
+          let best=0,bv=1e18;
+          for (let i=0;i<sel.length;i++) { const k=dist(col, sel[i].rgb); if (k<bv){ bv=k; best=i; } }
+          sel[best].count++;
+          ctx.fillStyle = sel[best].hex;
+          ctx.fillRect(gapPx + px * (cellPx + gapPx), gapPx + py * (cellPx + gapPx), cellPx, cellPx);
+        }
+      }
+
+      const used = sel.filter(x=>x.count>0).sort((a,b)=>b.count-a.count);
+      updateStats({ chipsX:c.chipsX, chipsY:c.chipsY, used });
+      last = { time: Date.now(), cfg: c, used };
+    }
+
+    function resetView() {
+      els.zoom.value = "1";
+      els.panX.value = "0";
+      els.panY.value = "0";
+    }
+
+    els.file.addEventListener("change", e => {
+      const f = e.target.files?.[0];
+      if (!f) return;
+      const r = new FileReader();
+      r.onload = () => { src.src = r.result; };
+      r.readAsDataURL(f);
+    });
+    els.generate.addEventListener("click", buildMosaic);
+    els.reset.addEventListener("click", resetView);
+    els.download.addEventListener("click", () => {
+      if (!last) return alert("Generate first");
+      const a = document.createElement("a");
+      a.href = els.canvas.toDataURL("image/png");
+      a.download = `mozaika-lite-${Date.now()}.png`;
+      a.click();
+    });
+
+    defPal.length && (els.palette.value = defPal.join(","));
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(0,0,els.canvas.width,els.canvas.height);
+    ctx.fillStyle = "#6b7280"; ctx.font = "16px Segoe UI"; ctx.fillText("Upload image and click Generate mosaic", 20, 32);
+  </script>
+</body>
+</html>

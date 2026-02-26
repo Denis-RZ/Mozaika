@@ -1,0 +1,50 @@
+{
+  "name": "mozaika-desktop-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Desktop demo wrapper for Mozaika (Electron + local backend)",
+  "main": "main.js",
+  "scripts": {
+    "prepare:assets": "powershell -ExecutionPolicy Bypass -File ../scripts/build-desktop-demo-assets.ps1",
+    "start": "electron .",
+    "start:prepared": "npm run prepare:assets && electron .",
+    "dist": "npm run prepare:assets && electron-builder --win portable",
+    "dist:dir": "npm run prepare:assets && electron-builder --win --dir"
+  },
+  "devDependencies": {
+    "electron": "33.2.1",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "com.mozaika.demo",
+    "productName": "Mozaika Demo",
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "runtime",
+        "to": "runtime",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    }
+  }
+}
