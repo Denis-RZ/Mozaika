@@ -67,6 +67,23 @@ const tabs: Array<{ key: TabKey; label: string }> = [
 ];
 
 type StudioViewMode = "basic" | "advanced";
+type StudioGuideStepState = "done" | "current" | "pending";
+interface StudioNextAction {
+  text: string;
+  buttonLabel?: string;
+  onClick?: () => void;
+  buttonDisabled?: boolean;
+}
+
+function studioStepStateLabel(state: StudioGuideStepState): string {
+  if (state === "done") {
+    return "Готово";
+  }
+  if (state === "current") {
+    return "Сейчас";
+  }
+  return "Далее";
+}
 
 const ORDER_STATUS_OPTIONS: Array<{ value: ProjectOrderStatus; label: string }> = [
   { value: "submitted", label: "Новый" },
@@ -797,6 +814,9 @@ export default function App() {
     originX: number;
     originY: number;
   } | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const generateButtonRef = useRef<HTMLButtonElement | null>(null);
+  const exportSectionRef = useRef<HTMLDetailsElement | null>(null);
   const [replaceFromColorId, setReplaceFromColorId] = useState<number | null>(null);
   const [replaceToColorId, setReplaceToColorId] = useState<number | null>(null);
   const [exportDpi, setExportDpi] = useState(200);
@@ -1003,6 +1023,191 @@ export default function App() {
   ]);
   const generationSourceImage = imageFile ?? fallbackSourceImageFile;
   const hasGenerationSourceImage = generationSourceImage !== null;
+  const hasValidGenerationParameters = useMemo(() => {
+    if (!Number.isFinite(studioForm.fieldWidthMm) || studioForm.fieldWidthMm <= 0) {
+      return false;
+    }
+    if (!Number.isFinite(studioForm.fieldHeightMm) || studioForm.fieldHeightMm <= 0) {
+      return false;
+    }
+    if (!Number.isFinite(studioForm.cellSizeMm) || studioForm.cellSizeMm <= 0) {
+      return false;
+    }
+    if (!Number.isFinite(studioForm.gapMm) || studioForm.gapMm < 0) {
+      return false;
+    }
+    if (!Number.isFinite(studioForm.maxColors) || studioForm.maxColors < 1) {
+      return false;
+    }
+    if (activePalette.length === 0) {
+      return false;
+    }
+    if (activeGroutColors.length > 0 && studioForm.groutColorId === null) {
+      return false;
+    }
+
+    return true;
+  }, [
+    activePalette.length,
+    activeGroutColors.length,
+    studioForm.cellSizeMm,
+    studioForm.fieldHeightMm,
+    studioForm.fieldWidthMm,
+    studioForm.gapMm,
+    studioForm.groutColorId,
+    studioForm.maxColors,
+  ]);
+  const onOpenImagePicker = useCallback(() => {
+    imageInputRef.current?.click();
+  }, []);
+  const onTriggerGenerateFromGuide = useCallback(() => {
+    generateButtonRef.current?.click();
+  }, []);
+  const onOpenProjectsTabFromGuide = useCallback(() => {
+    setActiveTab("projects");
+    setNotice("Откройте блок проектов и сохраните текущую версию результата.");
+  }, []);
+  const onFocusExportSection = useCallback(() => {
+    if (!exportSectionRef.current) {
+      return;
+    }
+
+    exportSectionRef.current.open = true;
+    exportSectionRef.current.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, []);
+  const studioGuideCurrentStepIndex = useMemo(() => {
+    if (!canUseStudio) {
+      return hasGenerationSourceImage ? 2 : 0;
+    }
+    if (!hasGenerationSourceImage) {
+      return 0;
+    }
+    if (!hasValidGenerationParameters) {
+      return 1;
+    }
+    if (!hasGeneratedSnapshot || !mosaicResult) {
+      return 2;
+    }
+    if (selectedProjectId === null) {
+      return 3;
+    }
+    return 4;
+  }, [
+    canUseStudio,
+    hasGenerationSourceImage,
+    hasGeneratedSnapshot,
+    hasValidGenerationParameters,
+    mosaicResult,
+    selectedProjectId,
+  ]);
+  const studioGuideSteps = useMemo(() => {
+    const stateForIndex = (stepIndex: number): StudioGuideStepState => {
+      if (stepIndex < studioGuideCurrentStepIndex) {
+        return "done";
+      }
+      if (stepIndex === studioGuideCurrentStepIndex) {
+        return "current";
+      }
+      return "pending";
+    };
+
+    return [
+      {
+        key: "upload",
+        title: "Загрузите изображение",
+        description: "Подойдет любое фото/картинка. Это исходник для расчета мозаики.",
+        state: stateForIndex(0),
+      },
+      {
+        key: "configure",
+        title: "Проверьте параметры",
+        description: "Укажите размеры поля, ячейки, шва и количество цветов.",
+        state: stateForIndex(1),
+      },
+      {
+        key: "generate",
+        title: "Сгенерируйте мозаику",
+        description: "Нажмите кнопку генерации, чтобы получить превью, цену и ведомость цветов.",
+        state: stateForIndex(2),
+      },
+      {
+        key: "save",
+        title: "Сохраните в проект",
+        description: "Во вкладке «Проекты» создайте проект или сохраните новую версию.",
+        state: stateForIndex(3),
+      },
+      {
+        key: "export",
+        title: "Выгрузите результат",
+        description: "Скачайте PNG/JPEG/SVG/PDF/CSV и отправьте на согласование.",
+        state: stateForIndex(4),
+      },
+    ];
+  }, [studioGuideCurrentStepIndex]);
+  const studioNextAction = useMemo<StudioNextAction>(() => {
+    if (!canUseStudio) {
+      return {
+        text: `Текущая роль: ${roleLabel(currentRole)}. Редактирование и генерация доступны Заказчику и Админу.`,
+      };
+    }
+
+    if (!hasGenerationSourceImage) {
+      return {
+        text: "Сначала выберите исходное изображение для расчета.",
+        buttonLabel: "Выбрать изображение",
+        onClick: onOpenImagePicker,
+        buttonDisabled: busy,
+      };
+    }
+
+    if (!hasValidGenerationParameters) {
+      return {
+        text: "Проверьте параметры выше: нужны корректные размеры и активная палитра.",
+      };
+    }
+
+    if (!hasGeneratedSnapshot || !mosaicResult) {
+      return {
+        text: "Запустите первый расчет, чтобы увидеть итоговую мозаику и расчёт цены.",
+        buttonLabel: "Сгенерировать сейчас",
+        onClick: onTriggerGenerateFromGuide,
+        buttonDisabled: busy,
+      };
+    }
+
+    if (selectedProjectId === null) {
+      return {
+        text: "Результат готов. Следующий шаг: сохранить версию во вкладке «Проекты».",
+        buttonLabel: "Перейти в проекты",
+        onClick: onOpenProjectsTabFromGuide,
+        buttonDisabled: busy || !canEditProjects,
+      };
+    }
+
+    return {
+      text: "Результат сохранен в проекте. Можно сразу выгружать файлы для печати и сборки.",
+      buttonLabel: "К блоку экспорта",
+      onClick: onFocusExportSection,
+      buttonDisabled: busy || !mosaicResult,
+    };
+  }, [
+    busy,
+    canEditProjects,
+    canUseStudio,
+    currentRole,
+    hasGeneratedSnapshot,
+    hasGenerationSourceImage,
+    hasValidGenerationParameters,
+    mosaicResult,
+    onFocusExportSection,
+    onOpenImagePicker,
+    onOpenProjectsTabFromGuide,
+    onTriggerGenerateFromGuide,
+    selectedProjectId,
+  ]);
   const maybeShowGenerateFirstPopup = useCallback(() => {
     if (hideGenerateFirstPopupThisSession || muteGenerateFirstPopupUntilGeneration) {
       return;
@@ -2828,6 +3033,41 @@ export default function App() {
         <section className="workspace">
           <article className="panel">
             <h2>Параметры генерации</h2>
+            <section className="studio-steps-panel" aria-label="Пошаговая инструкция">
+              <div className="studio-steps-head">
+                <h3>Как пользоваться генератором</h3>
+                <p className="muted studio-steps-help">
+                  Шаги подсвечиваются автоматически по вашему текущему состоянию.
+                </p>
+              </div>
+              <div className="studio-steps-grid">
+                {studioGuideSteps.map((step, index) => (
+                  <article key={step.key} className={`studio-step is-${step.state}`}>
+                    <div className="studio-step-head">
+                      <strong>
+                        {index + 1}. {step.title}
+                      </strong>
+                      <span className={`step-state is-${step.state}`}>{studioStepStateLabel(step.state)}</span>
+                    </div>
+                    <small>{step.description}</small>
+                  </article>
+                ))}
+              </div>
+              <div className="next-action">
+                <strong>Что делать сейчас:</strong>
+                <span>{studioNextAction.text}</span>
+                {studioNextAction.buttonLabel && studioNextAction.onClick && (
+                  <button
+                    type="button"
+                    className="button-secondary next-action-button"
+                    onClick={studioNextAction.onClick}
+                    disabled={Boolean(studioNextAction.buttonDisabled)}
+                  >
+                    {studioNextAction.buttonLabel}
+                  </button>
+                )}
+              </div>
+            </section>
             <div className="studio-mode-switch" role="tablist" aria-label="Режим интерфейса студии">
               <button
                 type="button"
@@ -2851,7 +3091,7 @@ export default function App() {
             </p>
 
             <label className="file-upload">
-              <input type="file" accept="image/*" onChange={onImageChange} />
+              <input ref={imageInputRef} type="file" accept="image/*" onChange={onImageChange} />
               <span>{imageFile ? imageFile.name : "Нажмите, чтобы выбрать изображение"}</span>
             </label>
 
@@ -3304,6 +3544,7 @@ export default function App() {
             </div>
 
             <button
+              ref={generateButtonRef}
               type="button"
               className="button-primary"
               onClick={onGenerateMosaic}
@@ -3651,7 +3892,7 @@ export default function App() {
                   </div>
                 </details>
 
-                <details className="inline-editor fold-card" open>
+                <details ref={exportSectionRef} className="inline-editor fold-card" open>
                   <summary>Экспорт и печать</summary>
                   <div className="fold-content">
                     <div className="form-grid two-col">

@@ -93,6 +93,7 @@ For local development:
 
 - Roadmap draft (RU): `docs/roadmap-ru.md`
 - TZ progress tracker: `docs/tz-progress.md`
+- Demo smoke-checklist: `docs/smoke-checklist-customer-demo.md`
 
 ## Encoding Check
 

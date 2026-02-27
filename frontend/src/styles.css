@@ -183,6 +183,7 @@ p {
 .studio-steps-panel {
   display: grid;
   gap: 0.75rem;
+  margin: 0.55rem 0 0.85rem;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -285,6 +286,10 @@ p {
 
 .next-action span {
   color: var(--text-soft);
+}
+
+.next-action strong {
+  color: var(--text);
 }
 
 .next-action-button {
