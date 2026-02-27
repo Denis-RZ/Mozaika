@@ -4587,7 +4587,7 @@ export default function App() {
                 <label>
                   <LabelTitle
                     text="Файл базы данных"
-                    hint="Path to server data file, e.g. C:\\folder\\mozaika.storage.json or C:\\folder\\mozaika.db."
+                    hint="Путь к файлу данных на сервере. Пример: C:\\folder\\mozaika.storage.json или C:\\folder\\mozaika.db."
                   />
                   <input
                     type="text"
@@ -4639,7 +4639,7 @@ export default function App() {
                   </label>
                   {(dbDraft.provider === "postgres" || dbDraft.provider === "mysql") && (
                     <label>
-                      <LabelTitle text="SSL mode" hint="Режим SSL: Require/Prefer/Disable (зависит от хостинга)." />
+                      <LabelTitle text="Режим SSL" hint="Например: Require, Prefer или Disable (зависит от хостинга)." />
                       <input
                         type="text"
                         value={dbConnectionForm.sslMode}
@@ -4656,7 +4656,7 @@ export default function App() {
                           setDbConnectionField("trustServerCertificate", event.target.checked)
                         }
                       />
-                      Trust server certificate
+                      Доверять сертификату сервера
                     </label>
                   )}
                   {dbDraft.provider === "sqlserver" && (
@@ -4666,7 +4666,7 @@ export default function App() {
                         checked={dbConnectionForm.encrypt}
                         onChange={(event) => setDbConnectionField("encrypt", event.target.checked)}
                       />
-                      Encrypt соединение
+                      Шифровать соединение
                     </label>
                   )}
                 </>

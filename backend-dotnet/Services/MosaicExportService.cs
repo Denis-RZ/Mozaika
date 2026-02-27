@@ -684,7 +684,7 @@ public sealed class MosaicExportService
     {
         var totalCells = data.Rows * data.Columns;
         var builder = new StringBuilder();
-        builder.AppendLine("color_id,color_name,ral_code,hex,cells,ratio_percent");
+        builder.AppendLine("id_цвета,название_цвета,код_ral,hex,количество_чипов,доля_процентов");
 
         foreach (var item in data.CountsByColorId.OrderByDescending(item => item.Value).ThenBy(item => item.Key))
         {
@@ -709,7 +709,7 @@ public sealed class MosaicExportService
     private static byte[] RenderGridCsv(ValidatedExport data)
     {
         var builder = new StringBuilder(256 * 1024);
-        builder.AppendLine("row_top,row_bottom,column_left,column_right,color_id,color_name,ral_code,hex");
+        builder.AppendLine("ряд_сверху,ряд_снизу,колонка_слева,колонка_справа,id_цвета,название_цвета,код_ral,hex");
 
         for (var row = 0; row < data.Rows; row++)
         {
@@ -752,7 +752,7 @@ public sealed class MosaicExportService
     {
         var modules = BuildModules(data);
         var builder = new StringBuilder(96 * 1024);
-        builder.AppendLine("module_number,module_row_from_bottom,module_column_from_left,row_top_start,row_top_end,row_bottom_start,row_bottom_end,column_left_start,column_left_end,column_right_start,column_right_end,cells,used_colors,dominant_color_id,dominant_color_name,dominant_color_ral,dominant_color_hex");
+        builder.AppendLine("номер_модуля,ряд_модуля_снизу,колонка_модуля_слева,ряд_сверху_начало,ряд_сверху_конец,ряд_снизу_начало,ряд_снизу_конец,колонка_слева_начало,колонка_слева_конец,колонка_справа_начало,колонка_справа_конец,количество_чипов,использовано_цветов,доминирующий_id_цвета,доминирующий_цвет_название,доминирующий_цвет_ral,доминирующий_цвет_hex");
 
         foreach (var module in modules)
         {
