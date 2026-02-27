@@ -41,6 +41,15 @@ public sealed class ProjectStorageService(MozaikaDbContext dbContext)
         int limit
     )
     {
+        if (!string.Equals(callerRole, AppRoles.Admin, StringComparison.Ordinal) &&
+            !string.Equals(callerRole, AppRoles.Customer, StringComparison.Ordinal))
+        {
+            throw new ProjectStorageException(
+                "Недостаточно прав для просмотра списка проектов.",
+                StatusCodes.Status403Forbidden
+            );
+        }
+
         limit = Math.Clamp(limit, 1, 100);
         page = Math.Max(1, page);
 
@@ -354,6 +363,16 @@ public sealed class ProjectStorageService(MozaikaDbContext dbContext)
         if (project is null)
         {
             throw new ProjectStorageException("Проект не найден.", StatusCodes.Status404NotFound);
+        }
+
+        if (!string.IsNullOrWhiteSpace(callerRole) &&
+            !string.Equals(callerRole, AppRoles.Admin, StringComparison.Ordinal) &&
+            !string.Equals(callerRole, AppRoles.Customer, StringComparison.Ordinal))
+        {
+            throw new ProjectStorageException(
+                "Недостаточно прав для доступа к проекту.",
+                StatusCodes.Status403Forbidden
+            );
         }
 
         // Customers can only access their own projects.

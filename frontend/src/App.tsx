@@ -924,9 +924,12 @@ export default function App() {
       if (item.key === "palette" || item.key === "settings") {
         return isAdmin;
       }
+      if (item.key === "projects") {
+        return canEditProjects;
+      }
       return true;
     });
-  }, [isAdmin]);
+  }, [canEditProjects, isAdmin]);
 
   const gridEstimate = useMemo(
     () =>
@@ -1083,7 +1086,7 @@ export default function App() {
 
   const refreshProjects = useCallback(
     async (page?: number) => {
-      if (!isAuthenticated) {
+      if (!isAuthenticated || !canEditProjects) {
         setProjects([]);
         setProjectsTotal(0);
         setSelectedProjectId(null);
@@ -1116,12 +1119,12 @@ export default function App() {
         setLoadingProjects(false);
       }
     },
-    [isAuthenticated, projectsPage, projectsLimit],
+    [canEditProjects, isAuthenticated, projectsPage, projectsLimit],
   );
 
   const refreshProjectWorkflow = useCallback(
     async (projectId: number) => {
-      if (!isAuthenticated) {
+      if (!isAuthenticated || !canEditProjects) {
         setProjectShares([]);
         setProjectOrders([]);
         return;
@@ -1148,7 +1151,7 @@ export default function App() {
         return next;
       });
     },
-    [isAuthenticated],
+    [canEditProjects, isAuthenticated],
   );
 
   const refreshAuthState = useCallback(async () => {
@@ -1190,14 +1193,14 @@ export default function App() {
   }, [refreshProjects, isAuthenticated]);
 
   useEffect(() => {
-    if (isAdmin) {
+    if (isAdmin && canEditProjects) {
       return;
     }
 
-    if (activeTab === "palette" || activeTab === "settings") {
+    if (activeTab === "palette" || activeTab === "settings" || (activeTab === "projects" && !canEditProjects)) {
       setActiveTab("studio");
     }
-  }, [activeTab, isAdmin]);
+  }, [activeTab, canEditProjects, isAdmin]);
 
   useEffect(() => {
     return () => {

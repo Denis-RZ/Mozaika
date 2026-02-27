@@ -42,16 +42,7 @@ public sealed class AuthService
         _dbContext = dbContext;
         var authOptions = authOptionsAccessor.Value ?? new AuthOptions();
         _sessionTtl = TimeSpan.FromHours(Math.Clamp(authOptions.SessionHours, 1, 24 * 30));
-        var defaultAdmin = (authOptions.Users ?? [])
-            .Where(item => item.IsActive)
-            .Where(item => string.Equals(item.Role?.Trim(), AppRoles.Admin, StringComparison.OrdinalIgnoreCase))
-            .Where(item => !string.IsNullOrWhiteSpace(item.Username) && !string.IsNullOrWhiteSpace(item.Password))
-            .Select(item => new
-            {
-                Username = NormalizeLogin(item.Username),
-                Password = item.Password.Trim(),
-            })
-            .FirstOrDefault();
+        var defaultAdmin = AuthBootstrapUsers.ResolveDefaultAdmin(authOptions);
         _defaultAdminUsername = defaultAdmin?.Username;
         _defaultAdminPassword = defaultAdmin?.Password;
     }

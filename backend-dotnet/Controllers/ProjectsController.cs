@@ -18,7 +18,7 @@ public sealed class ProjectsController(
         [FromQuery(Name = "limit")] int limit = 20
     )
     {
-        var authError = RequireAuthenticated();
+        var authError = RequireAnyRole(AppRoles.Admin, AppRoles.Customer);
         if (authError is not null)
         {
             return authError;
@@ -67,7 +67,7 @@ public sealed class ProjectsController(
     [HttpGet("{projectId:int}")]
     public async Task<ActionResult<ProjectReadResponse>> Get(int projectId)
     {
-        var authError = RequireAuthenticated();
+        var authError = RequireAnyRole(AppRoles.Admin, AppRoles.Customer);
         if (authError is not null)
         {
             return authError;
@@ -178,7 +178,7 @@ public sealed class ProjectsController(
     [HttpGet("{projectId:int}/generations/{generationId:int}")]
     public async Task<ActionResult<ProjectGenerationReadResponse>> GetGeneration(int projectId, int generationId)
     {
-        var authError = RequireAuthenticated();
+        var authError = RequireAnyRole(AppRoles.Admin, AppRoles.Customer);
         if (authError is not null)
         {
             return authError;
@@ -230,7 +230,7 @@ public sealed class ProjectsController(
     [HttpGet("{projectId:int}/shares")]
     public async Task<ActionResult<List<ProjectShareReadResponse>>> ListShares(int projectId)
     {
-        var authError = RequireAuthenticated();
+        var authError = RequireAnyRole(AppRoles.Admin, AppRoles.Customer);
         if (authError is not null)
         {
             return authError;
@@ -311,7 +311,7 @@ public sealed class ProjectsController(
     [HttpGet("{projectId:int}/orders")]
     public async Task<ActionResult<List<ProjectOrderReadResponse>>> ListOrders(int projectId)
     {
-        var authError = RequireAuthenticated();
+        var authError = RequireAnyRole(AppRoles.Admin, AppRoles.Customer);
         if (authError is not null)
         {
             return authError;

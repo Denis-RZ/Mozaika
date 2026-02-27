@@ -68,6 +68,9 @@ Backend (.NET) variables:
 - `MOZAIKA__PRICING__SETUPPRICE`
 - `MOZAIKA__PRICING__MINORDERPRICE`
 - `MOZAIKA__CORSORIGINS__0` (for array items)
+- `MOZAIKA_AUTH_ADMIN_PASSWORD`
+- `MOZAIKA_AUTH_CUSTOMER_PASSWORD`
+- `MOZAIKA_AUTH_VIEWER_PASSWORD`
 
 Frontend optional variable:
 
@@ -75,11 +78,16 @@ Frontend optional variable:
 
 ## Auth (v1)
 
-Demo users from `backend-dotnet/appsettings.json`:
+`backend-dotnet/appsettings.json` now stores only usernames/roles.
+Passwords are taken from environment variables listed above.
 
-- `admin / admin123` (`admin`)
-- `customer / customer123` (`customer`)
-- `viewer / viewer123` (`viewer`)
+For local development:
+
+- `backend-dotnet/appsettings.Development.json` enables fallback demo passwords.
+- `start-local.ps1` explicitly sets:
+  - `admin / admin123`
+  - `customer / customer123`
+  - `viewer / viewer123`
 
 ## Planning
 

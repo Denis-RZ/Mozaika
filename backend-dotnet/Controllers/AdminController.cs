@@ -149,10 +149,11 @@ public sealed class AdminController(
         var createSchema = payload.CreateSchema ?? true;
         var seedDefaults = payload.SeedDefaults ?? true;
         var shouldMigrateData = RequiresDataMigration(currentOptions, nextOptions);
+        var effectiveSeedDefaults = shouldMigrateData ? false : seedDefaults;
 
         try
         {
-            await VerifyDatabaseConnectionAsync(nextOptions, createSchema, seedDefaults);
+            await VerifyDatabaseConnectionAsync(nextOptions, createSchema, effectiveSeedDefaults);
             if (shouldMigrateData)
             {
                 var snapshot = await DatabaseSnapshotTransfer.CaptureAsync(dbContext);

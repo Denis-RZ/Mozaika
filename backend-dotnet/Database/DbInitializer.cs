@@ -289,47 +289,19 @@ public static class DbInitializer
 
     private static async Task SeedUsersAsync(MozaikaDbContext dbContext, AuthOptions? authOptions, DateTime utcNow)
     {
-        var configuredUsers = (authOptions?.Users ?? [])
-            .Where(item => item.IsActive)
-            .Select(item => new
-            {
-                Username = item.Username.Trim().ToLowerInvariant(),
-                Password = item.Password.Trim(),
-                DisplayName = item.DisplayName.Trim(),
-                Role = NormalizeRole(item.Role),
-            })
-            .Where(item =>
-                !string.IsNullOrWhiteSpace(item.Username) &&
-                !string.IsNullOrWhiteSpace(item.Password) &&
-                !string.IsNullOrWhiteSpace(item.DisplayName))
-            .ToList();
-
+        var configuredUsers = AuthBootstrapUsers.Resolve(authOptions);
         if (configuredUsers.Count == 0)
         {
-            configuredUsers =
-            [
-                new
-                {
-                    Username = "admin",
-                    Password = "admin123",
-                    DisplayName = "Administrator",
-                    Role = AppRoles.Admin,
-                },
-                new
-                {
-                    Username = "customer",
-                    Password = "customer123",
-                    DisplayName = "Customer",
-                    Role = AppRoles.Customer,
-                },
-                new
-                {
-                    Username = "viewer",
-                    Password = "viewer123",
-                    DisplayName = "Viewer",
-                    Role = AppRoles.Viewer,
-                },
-            ];
+            var usersExist = await dbContext.Users.AnyAsync();
+            if (usersExist)
+            {
+                return;
+            }
+
+            throw new InvalidOperationException(
+                "Не настроены bootstrap-аккаунты: задайте Mozaika:Auth:Users (Password или PasswordEnv) " +
+                "или включите Mozaika:Auth:AllowInsecureFallbackPasswords для демо-режима."
+            );
         }
 
         foreach (var user in configuredUsers)
@@ -388,11 +360,5 @@ public static class DbInitializer
                 existing.UpdatedAt = utcNow;
             }
         }
-    }
-
-    private static string NormalizeRole(string role)
-    {
-        var normalized = role.Trim().ToLowerInvariant();
-        return AppRoles.IsSupported(normalized) ? normalized : AppRoles.Customer;
     }
 }
