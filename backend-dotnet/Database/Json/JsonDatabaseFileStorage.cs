@@ -160,6 +160,21 @@ public static class JsonDatabaseFileStorage
 
     private static async Task ReplaceDataAsync(MozaikaDbContext dbContext, DatabaseSnapshot snapshot, CancellationToken cancellationToken)
     {
+        var projectsWithActiveGeneration = await dbContext.Projects
+            .Where(item => item.ActiveGenerationId != null)
+            .ToListAsync(cancellationToken);
+
+        if (projectsWithActiveGeneration.Count > 0)
+        {
+            foreach (var project in projectsWithActiveGeneration)
+            {
+                project.ActiveGenerationId = null;
+            }
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+            dbContext.ChangeTracker.Clear();
+        }
+
         dbContext.ProjectOrderStatusHistory.RemoveRange(await dbContext.ProjectOrderStatusHistory.ToListAsync(cancellationToken));
         dbContext.ProjectOrders.RemoveRange(await dbContext.ProjectOrders.ToListAsync(cancellationToken));
         dbContext.ProjectShares.RemoveRange(await dbContext.ProjectShares.ToListAsync(cancellationToken));

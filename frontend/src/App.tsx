@@ -288,7 +288,11 @@ function clampNumber(value: number, min: number, max: number): number {
 }
 
 function parseNumberValue(raw: string): number {
-  return Number(raw.replace(",", "."));
+  const normalized = raw
+    .trim()
+    .replace(/[\s\u00A0]+/g, "")
+    .replace(/,/g, ".");
+  return Number(normalized);
 }
 
 function parseBulkPaletteRows(raw: string): ColorCreate[] {
@@ -2913,7 +2917,8 @@ export default function App() {
                     onChange={(event) => setStudioFieldFromUser("cellSizeMm", parseNumberValue(event.target.value))}
                   />
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     min={1}
                     step={0.1}
                     value={studioForm.cellSizeMm}
@@ -2937,7 +2942,8 @@ export default function App() {
                     onChange={(event) => setStudioFieldFromUser("gapMm", parseNumberValue(event.target.value))}
                   />
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     min={0}
                     step={0.1}
                     value={studioForm.gapMm}
@@ -3043,7 +3049,8 @@ export default function App() {
                         onChange={(event) => setStudioFieldFromUser("offsetXmm", parseNumberValue(event.target.value))}
                       />
                       <input
-                        type="number"
+                        type="text"
+                        inputMode="decimal"
                         step={0.1}
                         value={studioForm.offsetXmm}
                         onChange={(event) => setStudioFieldFromUser("offsetXmm", parseNumberValue(event.target.value))}
@@ -3066,7 +3073,8 @@ export default function App() {
                         onChange={(event) => setStudioFieldFromUser("offsetYmm", parseNumberValue(event.target.value))}
                       />
                       <input
-                        type="number"
+                        type="text"
+                        inputMode="decimal"
                         step={0.1}
                         value={studioForm.offsetYmm}
                         onChange={(event) => setStudioFieldFromUser("offsetYmm", parseNumberValue(event.target.value))}
@@ -3091,13 +3099,18 @@ export default function App() {
                         }
                       />
                       <input
-                        type="number"
+                        type="text"
+                        inputMode="decimal"
                         min={0.1}
                         step={0.1}
                         value={positionStepMm}
-                        onChange={(event) =>
-                          setPositionStepMm(Math.max(0.1, parseNumberValue(event.target.value)))
-                        }
+                        onChange={(event) => {
+                          const parsed = parseNumberValue(event.target.value);
+                          if (!Number.isFinite(parsed)) {
+                            return;
+                          }
+                          setPositionStepMm(Math.max(0.1, parsed));
+                        }}
                       />
                     </div>
                   </label>
@@ -3335,14 +3348,19 @@ export default function App() {
                     <label>
                       Шаг zoom
                       <input
-                        type="number"
+                        type="text"
+                        inputMode="decimal"
                         min={0.01}
                         max={2}
                         step={0.01}
                         value={previewZoomStep}
-                        onChange={(event) =>
-                          setPreviewZoomStep(Math.max(0.01, Number(event.target.value)))
-                        }
+                        onChange={(event) => {
+                          const parsed = parseNumberValue(event.target.value);
+                          if (!Number.isFinite(parsed)) {
+                            return;
+                          }
+                          setPreviewZoomStep(Math.max(0.01, parsed));
+                        }}
                       />
                     </label>
                   )}
@@ -4500,15 +4518,20 @@ export default function App() {
                   hint="Базовый размер плитки для первой генерации."
                 />
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   min={1}
                   value={settingsDraft.default_cell_size_mm}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    const parsed = parseNumberValue(event.target.value);
+                    if (!Number.isFinite(parsed)) {
+                      return;
+                    }
                     setSettingsDraft((current) => ({
                       ...current,
-                      default_cell_size_mm: Number(event.target.value),
-                    }))
-                  }
+                      default_cell_size_mm: parsed,
+                    }));
+                  }}
                 />
               </label>
               <label>
@@ -4517,15 +4540,20 @@ export default function App() {
                   hint="Базовая ширина шва между плитками."
                 />
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   min={0}
                   value={settingsDraft.default_gap_mm}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    const parsed = parseNumberValue(event.target.value);
+                    if (!Number.isFinite(parsed)) {
+                      return;
+                    }
                     setSettingsDraft((current) => ({
                       ...current,
-                      default_gap_mm: Number(event.target.value),
-                    }))
-                  }
+                      default_gap_mm: parsed,
+                    }));
+                  }}
                 />
               </label>
               <div className="actions">

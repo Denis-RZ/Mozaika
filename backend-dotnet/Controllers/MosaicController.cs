@@ -294,20 +294,37 @@ public sealed class MosaicController(
 
     private static bool TryParseFlexibleDouble(string raw, out double value)
     {
-        const NumberStyles style = NumberStyles.Float | NumberStyles.AllowThousands;
-        var trimmed = raw.Trim();
+        value = default;
+        var normalized = raw.Trim()
+            .Replace(" ", string.Empty)
+            .Replace("\u00A0", string.Empty);
 
-        if (double.TryParse(trimmed, style, CultureInfo.InvariantCulture, out value))
+        if (string.IsNullOrWhiteSpace(normalized))
         {
-            return true;
+            return false;
         }
 
-        if (double.TryParse(trimmed, style, CultureInfo.CurrentCulture, out value))
+        var lastComma = normalized.LastIndexOf(',');
+        var lastDot = normalized.LastIndexOf('.');
+
+        if (lastComma >= 0 && lastDot >= 0)
         {
-            return true;
+            var decimalSeparator = lastComma > lastDot ? ',' : '.';
+            var thousandSeparator = decimalSeparator == ',' ? '.' : ',';
+            normalized = normalized.Replace(thousandSeparator.ToString(), string.Empty);
+            normalized = normalized.Replace(decimalSeparator, '.');
+        }
+        else if (lastComma >= 0)
+        {
+            normalized = normalized.Replace(',', '.');
         }
 
-        var normalized = trimmed.Replace(" ", string.Empty).Replace(',', '.');
+        if (normalized.IndexOf('.') != normalized.LastIndexOf('.'))
+        {
+            return false;
+        }
+
+        const NumberStyles style = NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint;
         return double.TryParse(normalized, style, CultureInfo.InvariantCulture, out value);
     }
 

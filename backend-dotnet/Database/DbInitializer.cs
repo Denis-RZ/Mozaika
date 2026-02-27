@@ -74,6 +74,11 @@ public static class DbInitializer
 
     private static async Task NormalizeSettingsDataAsync(MozaikaDbContext dbContext)
     {
+        if (!dbContext.Database.IsRelational())
+        {
+            return;
+        }
+
         // Legacy databases may contain NULL/empty CORS JSON after earlier schema versions.
         await dbContext.Database.ExecuteSqlRawAsync(
             """

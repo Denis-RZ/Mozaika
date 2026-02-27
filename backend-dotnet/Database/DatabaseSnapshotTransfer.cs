@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Mozaika.Api.Database.Entities;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace Mozaika.Api.Database;
 
@@ -334,30 +336,58 @@ public static class DatabaseSnapshotTransfer
             }));
         }
 
-        if (snapshot.Colors.Count > 0)
-        {
-            dbContext.Colors.AddRange(snapshot.Colors.Select(item => new ColorEntity
-            {
-                Name = item.Name,
-                RalCode = item.RalCode,
-                RgbHex = item.RgbHex,
-                IsActive = item.IsActive,
-                CreatedAt = item.CreatedAt,
-            }));
-        }
-
-        if (snapshot.GroutColors.Count > 0)
-        {
-            dbContext.GroutColors.AddRange(snapshot.GroutColors.Select(item => new GroutColorEntity
-            {
-                Name = item.Name,
-                RgbHex = item.RgbHex,
-                IsActive = item.IsActive,
-                CreatedAt = item.CreatedAt,
-            }));
-        }
-
         await dbContext.SaveChangesAsync(cancellationToken);
+        dbContext.ChangeTracker.Clear();
+
+        var colorRows = snapshot.Colors
+            .OrderBy(item => item.Id)
+            .Select(item => new
+            {
+                SourceId = item.Id,
+                Entity = new ColorEntity
+                {
+                    Name = item.Name,
+                    RalCode = item.RalCode,
+                    RgbHex = item.RgbHex,
+                    IsActive = item.IsActive,
+                    CreatedAt = item.CreatedAt,
+                },
+            })
+            .ToList();
+
+        if (colorRows.Count > 0)
+        {
+            dbContext.Colors.AddRange(colorRows.Select(item => item.Entity));
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        var colorIdMap = colorRows.ToDictionary(item => item.SourceId, item => item.Entity.Id);
+
+        var groutRows = snapshot.GroutColors
+            .OrderBy(item => item.Id)
+            .Select(item => new
+            {
+                SourceId = item.Id,
+                Entity = new GroutColorEntity
+                {
+                    Name = item.Name,
+                    RgbHex = item.RgbHex,
+                    IsActive = item.IsActive,
+                    CreatedAt = item.CreatedAt,
+                },
+            })
+            .ToList();
+
+        if (groutRows.Count > 0)
+        {
+            dbContext.GroutColors.AddRange(groutRows.Select(item => item.Entity));
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        var groutIdMap = groutRows.ToDictionary(item => item.SourceId, item => item.Entity.Id);
+        var hasColorIdRemap = colorIdMap.Any(item => item.Key != item.Value);
+        var hasGroutIdRemap = groutIdMap.Any(item => item.Key != item.Value);
+
         dbContext.ChangeTracker.Clear();
 
         var userRows = snapshot.Users
@@ -446,7 +476,9 @@ public static class DatabaseSnapshotTransfer
                     Version = item.Version,
                     Name = item.Name,
                     Note = item.Note,
-                    SnapshotJson = item.SnapshotJson,
+                    SnapshotJson = hasColorIdRemap || hasGroutIdRemap
+                        ? RemapProjectSnapshotJson(item.SnapshotJson, colorIdMap, groutIdMap)
+                        : item.SnapshotJson,
                     CreatedAt = item.CreatedAt,
                 },
             })
@@ -571,8 +603,143 @@ public static class DatabaseSnapshotTransfer
         throw new InvalidOperationException($"Cannot map {entityName} dependency with source id '{sourceId}'.");
     }
 
+    private static string RemapProjectSnapshotJson(
+        string snapshotJson,
+        IReadOnlyDictionary<int, int> colorIdMap,
+        IReadOnlyDictionary<int, int> groutIdMap
+    )
+    {
+        if (string.IsNullOrWhiteSpace(snapshotJson))
+        {
+            return snapshotJson;
+        }
+
+        JsonNode? rootNode;
+        try
+        {
+            rootNode = JsonNode.Parse(snapshotJson);
+        }
+        catch (JsonException)
+        {
+            return snapshotJson;
+        }
+
+        if (rootNode is not JsonObject root)
+        {
+            return snapshotJson;
+        }
+
+        if (colorIdMap.Count > 0)
+        {
+            RemapIntArrayNode(root["include_color_ids"], colorIdMap);
+            RemapIntArrayNode(root["exclude_color_ids"], colorIdMap);
+
+            if (root["mosaic"] is JsonObject mosaic)
+            {
+                RemapUsedColorsNode(mosaic["used_colors"], colorIdMap);
+                RemapGridColorIdsNode(mosaic["grid_color_ids"], colorIdMap);
+            }
+        }
+
+        if (groutIdMap.Count > 0)
+        {
+            RemapIntValueNode(root, "grout_color_id", groutIdMap);
+        }
+
+        return root.ToJsonString();
+    }
+
+    private static void RemapUsedColorsNode(JsonNode? node, IReadOnlyDictionary<int, int> colorIdMap)
+    {
+        if (node is not JsonArray items)
+        {
+            return;
+        }
+
+        for (var index = 0; index < items.Count; index++)
+        {
+            if (items[index] is not JsonObject colorObject)
+            {
+                continue;
+            }
+
+            RemapIntValueNode(colorObject, "id", colorIdMap);
+        }
+    }
+
+    private static void RemapGridColorIdsNode(JsonNode? node, IReadOnlyDictionary<int, int> colorIdMap)
+    {
+        if (node is not JsonArray rows)
+        {
+            return;
+        }
+
+        for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++)
+        {
+            if (rows[rowIndex] is JsonArray row)
+            {
+                RemapIntArrayValues(row, colorIdMap);
+            }
+        }
+    }
+
+    private static void RemapIntArrayNode(JsonNode? node, IReadOnlyDictionary<int, int> idMap)
+    {
+        if (node is JsonArray values)
+        {
+            RemapIntArrayValues(values, idMap);
+        }
+    }
+
+    private static void RemapIntArrayValues(JsonArray values, IReadOnlyDictionary<int, int> idMap)
+    {
+        for (var index = 0; index < values.Count; index++)
+        {
+            if (values[index] is JsonValue valueNode &&
+                valueNode.TryGetValue<int>(out var sourceId))
+            {
+                values[index] = MapOptional(idMap, sourceId);
+            }
+        }
+    }
+
+    private static void RemapIntValueNode(
+        JsonObject jsonObject,
+        string propertyName,
+        IReadOnlyDictionary<int, int> idMap
+    )
+    {
+        if (jsonObject[propertyName] is JsonValue valueNode &&
+            valueNode.TryGetValue<int>(out var sourceId))
+        {
+            jsonObject[propertyName] = MapOptional(idMap, sourceId);
+        }
+    }
+
+    private static int MapOptional(IReadOnlyDictionary<int, int> idMap, int sourceId)
+    {
+        return idMap.TryGetValue(sourceId, out var mapped)
+            ? mapped
+            : sourceId;
+    }
+
     private static async Task ClearAsync(MozaikaDbContext dbContext, CancellationToken cancellationToken)
     {
+        var projectsWithActiveGeneration = await dbContext.Projects
+            .Where(item => item.ActiveGenerationId != null)
+            .ToListAsync(cancellationToken);
+
+        if (projectsWithActiveGeneration.Count > 0)
+        {
+            foreach (var project in projectsWithActiveGeneration)
+            {
+                project.ActiveGenerationId = null;
+            }
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+            dbContext.ChangeTracker.Clear();
+        }
+
         dbContext.ProjectOrderStatusHistory.RemoveRange(await dbContext.ProjectOrderStatusHistory.ToListAsync(cancellationToken));
         dbContext.ProjectOrders.RemoveRange(await dbContext.ProjectOrders.ToListAsync(cancellationToken));
         dbContext.ProjectShares.RemoveRange(await dbContext.ProjectShares.ToListAsync(cancellationToken));
