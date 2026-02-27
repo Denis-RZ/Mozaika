@@ -1,3 +1,5 @@
+# Публичная страница: https://<owner>.github.io/<repo>/ → lite-demo
+# Чтобы заказчик не видел репозиторий: сделать репозиторий Private — сайт по ссылке остаётся доступен, код скрыт.
 name: Deploy Lite Demo to GitHub Pages
 
 on:

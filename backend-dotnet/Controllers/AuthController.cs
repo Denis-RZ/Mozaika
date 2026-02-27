@@ -18,14 +18,41 @@ public sealed class AuthController(AuthService authService) : ApiControllerBase
             {
                 Token = login.Token,
                 ExpiresAt = login.Session.ExpiresAt,
+                RequiresPasswordChange = login.Session.RequiresPasswordChange,
                 User = new AuthUserReadResponse
                 {
                     Id = login.Session.UserId,
                     Username = login.Session.Username,
                     DisplayName = login.Session.DisplayName,
                     Role = login.Session.Role,
+                    RequiresPasswordChange = login.Session.RequiresPasswordChange,
                 },
             });
+        }
+        catch (AuthException ex)
+        {
+            return StatusCode(ex.StatusCode, new ApiError(ex.Message));
+        }
+    }
+
+    [HttpPost("change-password")]
+    public async Task<ActionResult<AuthSessionReadResponse>> ChangePassword([FromBody] AuthChangePasswordRequest payload)
+    {
+        var authError = RequireAuthenticated();
+        if (authError is not null)
+        {
+            return authError;
+        }
+
+        try
+        {
+            await authService.ChangePasswordAsync(CurrentSession!.UserId, payload.CurrentPassword, payload.NewPassword);
+            var token = ExtractCurrentToken();
+            var refreshedSession = string.IsNullOrWhiteSpace(token)
+                ? null
+                : await authService.TryGetSessionAsync(token!);
+
+            return Ok(authService.BuildSessionResponse(refreshedSession));
         }
         catch (AuthException ex)
         {

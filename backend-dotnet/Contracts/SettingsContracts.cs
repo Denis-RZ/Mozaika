@@ -7,6 +7,7 @@ public sealed class AdminSettingsReadResponse
     public double DefaultFieldHeightMm { get; set; }
     public double DefaultCellSizeMm { get; set; }
     public double DefaultGapMm { get; set; }
+    public List<string> CorsOrigins { get; set; } = [];
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
@@ -17,10 +18,12 @@ public sealed class AdminSettingsUpdateRequest
     public double? DefaultFieldHeightMm { get; set; }
     public double? DefaultCellSizeMm { get; set; }
     public double? DefaultGapMm { get; set; }
+    public List<string>? CorsOrigins { get; set; }
 
     public bool HasAnyValue() =>
         DefaultFieldWidthMm is not null ||
         DefaultFieldHeightMm is not null ||
         DefaultCellSizeMm is not null ||
-        DefaultGapMm is not null;
+        DefaultGapMm is not null ||
+        CorsOrigins is not null;
 }

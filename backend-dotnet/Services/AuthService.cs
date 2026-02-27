@@ -5,6 +5,7 @@ using Mozaika.Api.Contracts;
 using Mozaika.Api.Database;
 using Mozaika.Api.Database.Entities;
 using Mozaika.Api.Options;
+using Mozaika.Api.Security;
 
 namespace Mozaika.Api.Services;
 
@@ -26,18 +27,33 @@ public sealed class AuthSessionInfo
     public required string DisplayName { get; init; }
     public required string Role { get; init; }
     public required DateTime ExpiresAt { get; init; }
+    public required bool RequiresPasswordChange { get; init; }
 }
 
 public sealed class AuthService
 {
     private readonly MozaikaDbContext _dbContext;
     private readonly TimeSpan _sessionTtl;
+    private readonly string? _defaultAdminUsername;
+    private readonly string? _defaultAdminPassword;
 
     public AuthService(MozaikaDbContext dbContext, IOptions<AuthOptions> authOptionsAccessor)
     {
         _dbContext = dbContext;
         var authOptions = authOptionsAccessor.Value ?? new AuthOptions();
         _sessionTtl = TimeSpan.FromHours(Math.Clamp(authOptions.SessionHours, 1, 24 * 30));
+        var defaultAdmin = (authOptions.Users ?? [])
+            .Where(item => item.IsActive)
+            .Where(item => string.Equals(item.Role?.Trim(), AppRoles.Admin, StringComparison.OrdinalIgnoreCase))
+            .Where(item => !string.IsNullOrWhiteSpace(item.Username) && !string.IsNullOrWhiteSpace(item.Password))
+            .Select(item => new
+            {
+                Username = NormalizeLogin(item.Username),
+                Password = item.Password.Trim(),
+            })
+            .FirstOrDefault();
+        _defaultAdminUsername = defaultAdmin?.Username;
+        _defaultAdminPassword = defaultAdmin?.Password;
     }
 
     public async Task<(string Token, AuthSessionInfo Session)> LoginAsync(string username, string password)
@@ -120,6 +136,53 @@ public sealed class AuthService
         return BuildSessionInfo(dbSession.User, dbSession.ExpiresAt);
     }
 
+    public async Task ChangePasswordAsync(int userId, string currentPassword, string newPassword)
+    {
+        var current = currentPassword.Trim();
+        var next = newPassword.Trim();
+
+        if (string.IsNullOrWhiteSpace(current) || string.IsNullOrWhiteSpace(next))
+        {
+            throw new AuthException("Укажите текущий и новый пароль.");
+        }
+
+        if (next.Length < 8)
+        {
+            throw new AuthException("Новый пароль должен содержать минимум 8 символов.");
+        }
+
+        if (string.Equals(current, next, StringComparison.Ordinal))
+        {
+            throw new AuthException("Новый пароль должен отличаться от текущего.");
+        }
+
+        var user = await _dbContext.Users.FirstOrDefaultAsync(item => item.Id == userId && item.IsActive);
+        if (user is null)
+        {
+            throw new AuthException("Пользователь не найден.", StatusCodes.Status401Unauthorized);
+        }
+
+        var currentIsValid = PasswordHashing.Verify(
+            current,
+            user.PasswordHash,
+            user.PasswordSalt,
+            user.PasswordIterations
+        );
+
+        if (!currentIsValid)
+        {
+            throw new AuthException("Текущий пароль указан неверно.", StatusCodes.Status401Unauthorized);
+        }
+
+        var nextPassword = PasswordHashing.CreateHash(next, PasswordHashing.DefaultIterations);
+        user.PasswordHash = nextPassword.HashBase64;
+        user.PasswordSalt = nextPassword.SaltBase64;
+        user.PasswordIterations = nextPassword.Iterations;
+        user.UpdatedAt = DateTime.UtcNow;
+
+        await _dbContext.SaveChangesAsync();
+    }
+
     public async Task LogoutAsync(string? token)
     {
         if (string.IsNullOrWhiteSpace(token))
@@ -143,12 +206,14 @@ public sealed class AuthService
     {
         IsAuthenticated = session is not null,
         ExpiresAt = session?.ExpiresAt,
+        RequiresPasswordChange = session?.RequiresPasswordChange ?? false,
         User = session is null ? null : new AuthUserReadResponse
         {
             Id = session.UserId,
             Username = session.Username,
             DisplayName = session.DisplayName,
             Role = session.Role,
+            RequiresPasswordChange = session.RequiresPasswordChange,
         },
     };
 
@@ -176,14 +241,40 @@ public sealed class AuthService
         }
     }
 
-    private static AuthSessionInfo BuildSessionInfo(UserEntity user, DateTime expiresAt) => new()
+    private AuthSessionInfo BuildSessionInfo(UserEntity user, DateTime expiresAt) => new()
     {
         UserId = user.Id,
         Username = user.Username,
         DisplayName = user.DisplayName,
         Role = user.Role,
         ExpiresAt = expiresAt,
+        RequiresPasswordChange = RequiresPasswordChange(user),
     };
+
+    private bool RequiresPasswordChange(UserEntity user)
+    {
+        if (!string.Equals(user.Role, AppRoles.Admin, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(_defaultAdminUsername) || string.IsNullOrWhiteSpace(_defaultAdminPassword))
+        {
+            return false;
+        }
+
+        if (!string.Equals(NormalizeLogin(user.Username), _defaultAdminUsername, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return PasswordHashing.Verify(
+            _defaultAdminPassword,
+            user.PasswordHash,
+            user.PasswordSalt,
+            user.PasswordIterations
+        );
+    }
 
     private static string NormalizeLogin(string value) => value.Trim().ToLowerInvariant();
 

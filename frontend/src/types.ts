@@ -6,11 +6,13 @@ export interface AuthUserRead {
   username: string;
   display_name: string;
   role: UserRole;
+  requires_password_change: boolean;
 }
 
 export interface AuthSessionRead {
   is_authenticated: boolean;
   expires_at: string | null;
+  requires_password_change: boolean;
   user: AuthUserRead | null;
 }
 
@@ -22,7 +24,13 @@ export interface AuthLoginRequest {
 export interface AuthLoginResponse {
   token: string;
   expires_at: string;
+  requires_password_change: boolean;
   user: AuthUserRead;
+}
+
+export interface AuthChangePasswordRequest {
+  current_password: string;
+  new_password: string;
 }
 
 export interface ColorRead {
@@ -61,6 +69,7 @@ export interface AdminSettingsRead {
   default_field_height_mm: number;
   default_cell_size_mm: number;
   default_gap_mm: number;
+  cors_origins: string[];
   created_at: string;
   updated_at: string;
 }

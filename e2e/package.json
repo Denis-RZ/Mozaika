@@ -2,6 +2,7 @@
   "name": "mozaika-e2e",
   "private": true,
   "scripts": {
+    "github-make-private": "node github-make-private.mjs",
     "presentation": "playwright test demo-presentation.spec.ts --headed --project=presentation",
     "presentation:ui": "playwright test demo-presentation.spec.ts --ui --project=presentation"
   },

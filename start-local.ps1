@@ -79,13 +79,35 @@ function Stop-DotnetBackendProcess {
   }
 }
 
+function Get-LogTail {
+  Param(
+    [string]$Path,
+    [int]$TailLines = 80
+  )
+
+  if (-not (Test-Path $Path)) {
+    return "(log file not found: $Path)"
+  }
+
+  try {
+    return ((Get-Content -Path $Path -Tail $TailLines) -join [Environment]::NewLine)
+  } catch {
+    return "(failed to read log '$Path': $($_.Exception.Message))"
+  }
+}
+
 function Wait-Port {
   Param(
     [int]$Port,
-    [int]$TimeoutSeconds = 25
+    [int]$TimeoutSeconds = 25,
+    [System.Diagnostics.Process]$Process = $null
   )
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   while ((Get-Date) -lt $deadline) {
+    if ($Process -and $Process.HasExited) {
+      return $false
+    }
+
     $listening = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue
     if ($listening) {
       return $true
@@ -113,17 +135,30 @@ $env:MOZAIKA__MAXUPLOADMB = "25"
 $env:MOZAIKA__CORSORIGINS__0 = "*"
 
 Write-Host "Starting backend on http://$BackendHost`:$BackendPort ..."
+$backendOutLog = Join-Path $backendDir "backend.out.log"
+$backendErrLog = Join-Path $backendDir "backend.err.log"
+Remove-Item $backendOutLog -ErrorAction SilentlyContinue
+Remove-Item $backendErrLog -ErrorAction SilentlyContinue
+
 $backendProc = Start-Process `
   -FilePath "dotnet" `
   -ArgumentList "run","--urls","http://$BackendHost`:$BackendPort" `
   -WindowStyle Hidden `
   -WorkingDirectory $backendDir `
-  -RedirectStandardOutput (Join-Path $backendDir "backend.out.log") `
-  -RedirectStandardError (Join-Path $backendDir "backend.err.log") `
+  -RedirectStandardOutput $backendOutLog `
+  -RedirectStandardError $backendErrLog `
   -PassThru
 
-if (-not (Wait-Port -Port $BackendPort -TimeoutSeconds 35)) {
-  throw "Backend did not start on port $BackendPort. Check backend-dotnet/backend.err.log"
+if (-not (Wait-Port -Port $BackendPort -TimeoutSeconds 35 -Process $backendProc)) {
+  $backendReason = if ($backendProc.HasExited) {
+    "Backend process exited with code $($backendProc.ExitCode)."
+  } else {
+    "Timed out waiting for port $BackendPort."
+  }
+
+  $backendErrTail = Get-LogTail -Path $backendErrLog -TailLines 120
+  $backendOutTail = Get-LogTail -Path $backendOutLog -TailLines 80
+  throw "Backend did not start on port $BackendPort. $backendReason`n--- backend.err.log ---`n$backendErrTail`n--- backend.out.log ---`n$backendOutTail"
 }
 
 Write-Host "Installing frontend dependencies..."
@@ -132,17 +167,30 @@ npm install | Out-Null
 Pop-Location
 
 Write-Host "Starting frontend on http://$FrontendHost`:$FrontendPort ..."
+$frontendOutLog = Join-Path $frontendDir "frontend.out.log"
+$frontendErrLog = Join-Path $frontendDir "frontend.err.log"
+Remove-Item $frontendOutLog -ErrorAction SilentlyContinue
+Remove-Item $frontendErrLog -ErrorAction SilentlyContinue
+
 $frontendProc = Start-Process `
   -FilePath "npm.cmd" `
   -ArgumentList "run","dev","--","--host",$FrontendHost,"--port",$FrontendPort `
   -WindowStyle Hidden `
   -WorkingDirectory $frontendDir `
-  -RedirectStandardOutput (Join-Path $frontendDir "frontend.out.log") `
-  -RedirectStandardError (Join-Path $frontendDir "frontend.err.log") `
+  -RedirectStandardOutput $frontendOutLog `
+  -RedirectStandardError $frontendErrLog `
   -PassThru
 
-if (-not (Wait-Port -Port $FrontendPort -TimeoutSeconds 40)) {
-  throw "Frontend did not start on port $FrontendPort. Check frontend/frontend.err.log"
+if (-not (Wait-Port -Port $FrontendPort -TimeoutSeconds 40 -Process $frontendProc)) {
+  $frontendReason = if ($frontendProc.HasExited) {
+    "Frontend process exited with code $($frontendProc.ExitCode)."
+  } else {
+    "Timed out waiting for port $FrontendPort."
+  }
+
+  $frontendErrTail = Get-LogTail -Path $frontendErrLog -TailLines 120
+  $frontendOutTail = Get-LogTail -Path $frontendOutLog -TailLines 80
+  throw "Frontend did not start on port $FrontendPort. $frontendReason`n--- frontend.err.log ---`n$frontendErrTail`n--- frontend.out.log ---`n$frontendOutTail"
 }
 
 $url = "http://$FrontendHost`:$FrontendPort"

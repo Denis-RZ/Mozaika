@@ -20,6 +20,7 @@ public static class DbHelpers
             DefaultFieldHeightMm = 800,
             DefaultCellSizeMm = 10,
             DefaultGapMm = 2,
+            CorsOriginsJson = "[\"*\"]",
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow,
         };

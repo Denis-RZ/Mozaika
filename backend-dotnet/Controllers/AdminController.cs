@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Mozaika.Api.Contracts;
 using Mozaika.Api.Database;
 using Mozaika.Api.Database.Entities;
@@ -16,7 +17,10 @@ namespace Mozaika.Api.Controllers;
 public sealed class AdminController(
     MozaikaDbContext dbContext,
     RuntimeDatabaseSettingsStore runtimeDatabaseSettings,
-    IDatabaseProviderRegistry databaseProviderRegistry
+    IDatabaseProviderRegistry databaseProviderRegistry,
+    RuntimeCorsOriginsStore runtimeCorsOriginsStore,
+    AppSettingsDatabaseConfigWriter appSettingsDatabaseConfigWriter,
+    IOptions<AuthOptions> authOptionsAccessor
 ) : ApiControllerBase
 {
     [HttpGet("settings")]
@@ -66,6 +70,18 @@ public sealed class AdminController(
             return BadRequest(new ApiError("Расстояние между ячейками не может быть отрицательным."));
         }
 
+        string[]? nextCorsOrigins = null;
+        if (payload.CorsOrigins is not null)
+        {
+            var parsedCors = ParseCorsOrigins(payload.CorsOrigins);
+            if (!parsedCors.IsValid)
+            {
+                return BadRequest(new ApiError(parsedCors.Error!));
+            }
+
+            nextCorsOrigins = parsedCors.Origins!;
+        }
+
         var settings = await DbHelpers.GetOrCreateSettingsAsync(dbContext);
 
         if (payload.DefaultFieldWidthMm is not null)
@@ -86,6 +102,12 @@ public sealed class AdminController(
         if (payload.DefaultGapMm is not null)
         {
             settings.DefaultGapMm = payload.DefaultGapMm.Value;
+        }
+
+        if (nextCorsOrigins is not null)
+        {
+            settings.CorsOriginsJson = RuntimeCorsOriginsStore.SerializeOrigins(nextCorsOrigins);
+            runtimeCorsOriginsStore.Set(nextCorsOrigins);
         }
 
         settings.UpdatedAt = DateTime.UtcNow;
@@ -122,17 +144,26 @@ public sealed class AdminController(
             return BadRequest(new ApiError(parsed.Error!));
         }
 
+        var currentOptions = runtimeDatabaseSettings.GetSnapshot();
         var nextOptions = parsed.Options!;
         var createSchema = payload.CreateSchema ?? true;
         var seedDefaults = payload.SeedDefaults ?? true;
+        var shouldMigrateData = RequiresDataMigration(currentOptions, nextOptions);
 
         try
         {
             await VerifyDatabaseConnectionAsync(nextOptions, createSchema, seedDefaults);
+            if (shouldMigrateData)
+            {
+                var snapshot = await DatabaseSnapshotTransfer.CaptureAsync(dbContext);
+                await MigrateSnapshotToTargetAsync(snapshot, nextOptions);
+            }
+
+            await appSettingsDatabaseConfigWriter.PersistAsync(nextOptions);
         }
         catch (Exception ex)
         {
-            return BadRequest(new ApiError($"Ошибка подключения к базе данных: {ex.Message}"));
+            return BadRequest(new ApiError($"Ошибка переключения базы данных: {ex.Message}"));
         }
 
         runtimeDatabaseSettings.Set(nextOptions);
@@ -198,7 +229,7 @@ public sealed class AdminController(
                 await JsonDatabaseFileStorage.ImportAsync(testContext, options);
             }
 
-            await DbInitializer.SeedAsync(testContext, authOptions: null, seedDefaults: seedDefaults);
+            await DbInitializer.SeedAsync(testContext, authOptionsAccessor.Value, seedDefaults: seedDefaults);
 
             if (isJsonProvider)
             {
@@ -248,6 +279,74 @@ public sealed class AdminController(
             ConnectionString = connectionString,
             Echo = payload.Echo ?? false,
         }, null);
+    }
+
+    private async Task MigrateSnapshotToTargetAsync(DatabaseSnapshot snapshot, DatabaseOptions targetOptions)
+    {
+        var optionsBuilder = new DbContextOptionsBuilder<MozaikaDbContext>();
+        databaseProviderRegistry.Configure(optionsBuilder, targetOptions);
+        if (targetOptions.Echo)
+        {
+            optionsBuilder.EnableSensitiveDataLogging();
+        }
+
+        await using var targetContext = new MozaikaDbContext(optionsBuilder.Options);
+        await DbInitializer.SeedAsync(targetContext, authOptionsAccessor.Value, seedDefaults: false);
+        await DatabaseSnapshotTransfer.ApplyAsync(targetContext, snapshot);
+
+        if (JsonDatabaseFileStorage.IsJsonProvider(targetOptions))
+        {
+            await JsonDatabaseFileStorage.ExportAsync(targetContext, targetOptions);
+        }
+    }
+
+    private static bool RequiresDataMigration(DatabaseOptions current, DatabaseOptions next)
+    {
+        var providerChanged = !string.Equals(
+            current.Provider?.Trim(),
+            next.Provider?.Trim(),
+            StringComparison.OrdinalIgnoreCase
+        );
+
+        var connectionChanged = !string.Equals(
+            current.ConnectionString?.Trim(),
+            next.ConnectionString?.Trim(),
+            StringComparison.Ordinal
+        );
+
+        return providerChanged || connectionChanged;
+    }
+
+    private static (bool IsValid, string[]? Origins, string? Error) ParseCorsOrigins(IEnumerable<string> items)
+    {
+        var raw = (items ?? [])
+            .Select(item => item.Trim())
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .ToArray();
+
+        if (raw.Length == 0)
+        {
+            return (false, null, "Укажите хотя бы один origin для CORS.");
+        }
+
+        if (raw.Any(item => item == "*"))
+        {
+            return (true, ["*"], null);
+        }
+
+        var normalized = new List<string>(raw.Length);
+        foreach (var candidate in raw)
+        {
+            if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri) ||
+                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            {
+                return (false, null, $"Некорректный origin '{candidate}'. Используйте формат https://domain.tld[:port].");
+            }
+
+            normalized.Add($"{uri.Scheme.ToLowerInvariant()}://{uri.Authority.ToLowerInvariant()}");
+        }
+
+        return (true, RuntimeCorsOriginsStore.NormalizeOrigins(normalized), null);
     }
 
     [HttpGet("grout-colors")]

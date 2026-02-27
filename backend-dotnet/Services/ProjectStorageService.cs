@@ -395,6 +395,7 @@ public sealed class ProjectStorageService(MozaikaDbContext dbContext)
             Id = project.Id,
             Name = project.Name,
             Description = project.Description,
+            OwnerUsername = project.OwnerUsername,
             SourceImageMimeType = project.SourceImageMimeType,
             SourceImageBase64 = sourceImageBytes.Length == 0
                 ? string.Empty

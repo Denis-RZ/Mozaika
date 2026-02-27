@@ -17,6 +17,7 @@ public static class DbInitializer
     {
         await dbContext.Database.EnsureCreatedAsync();
         await EnsureIncrementalSchemaAsync(dbContext);
+        await NormalizeSettingsDataAsync(dbContext);
         if (!seedDefaults)
         {
             return;
@@ -33,6 +34,7 @@ public static class DbInitializer
                 DefaultFieldHeightMm = 800,
                 DefaultCellSizeMm = 10,
                 DefaultGapMm = 2,
+                CorsOriginsJson = "[\"*\"]",
                 CreatedAt = utcNow,
                 UpdatedAt = utcNow,
             };
@@ -68,6 +70,18 @@ public static class DbInitializer
 
         await SeedUsersAsync(dbContext, authOptions, utcNow);
         await dbContext.SaveChangesAsync();
+    }
+
+    private static async Task NormalizeSettingsDataAsync(MozaikaDbContext dbContext)
+    {
+        // Legacy databases may contain NULL/empty CORS JSON after earlier schema versions.
+        await dbContext.Database.ExecuteSqlRawAsync(
+            """
+            UPDATE app_settings
+            SET cors_origins_json = '["*"]'
+            WHERE COALESCE(cors_origins_json, '') = '';
+            """
+        );
     }
 
     private static async Task EnsureIncrementalSchemaAsync(MozaikaDbContext dbContext)
@@ -220,6 +234,12 @@ public static class DbInitializer
         await dbContext.Database.ExecuteSqlRawAsync(
             "CREATE INDEX IF NOT EXISTS IX_projects_owner_username ON projects(owner_username);"
         );
+        await EnsureSqliteColumnAsync(
+            dbContext,
+            tableName: "app_settings",
+            columnName: "cors_origins_json",
+            columnDefinition: "TEXT NOT NULL DEFAULT '[\"*\"]'"
+        );
     }
 
     private static async Task EnsureSqliteColumnAsync(
@@ -350,7 +370,7 @@ public static class DbInitializer
 
             if (string.IsNullOrWhiteSpace(existing.PasswordHash) ||
                 string.IsNullOrWhiteSpace(existing.PasswordSalt) ||
-                !PasswordHashing.Verify(user.Password, existing.PasswordHash, existing.PasswordSalt, existing.PasswordIterations))
+                existing.PasswordIterations <= 0)
             {
                 existing.PasswordHash = password.HashBase64;
                 existing.PasswordSalt = password.SaltBase64;

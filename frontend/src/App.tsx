@@ -287,6 +287,10 @@ function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+function parseNumberValue(raw: string): number {
+  return Number(raw.replace(",", "."));
+}
+
 function parseBulkPaletteRows(raw: string): ColorCreate[] {
   const rows = raw
     .split(/\r?\n/)
@@ -687,6 +691,16 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const normalized = base64.replace(/\s+/g, "");
+  const binary = window.atob(normalized);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes.buffer;
+}
+
 function normalizeMosaicResult(response: MosaicGenerateResponse): MosaicGenerateResponse {
   const fallbackTotalChips = response.rows * response.columns;
   const totalChips =
@@ -754,6 +768,7 @@ export default function App() {
   const [authSession, setAuthSession] = useState<AuthSessionRead>({
     is_authenticated: false,
     expires_at: null,
+    requires_password_change: false,
     user: null,
   });
   const [authBusy, setAuthBusy] = useState(false);
@@ -829,6 +844,17 @@ export default function App() {
   const [gridDraft, setGridDraft] = useState({ columns: 100, rows: 66 });
   const [includeColorIds, setIncludeColorIds] = useState<number[]>([]);
   const [excludeColorIds, setExcludeColorIds] = useState<number[]>([]);
+  const [liveRegenerateEnabled, setLiveRegenerateEnabled] = useState(true);
+  const [liveRegeneratePending, setLiveRegeneratePending] = useState(false);
+  const [liveRegenerateRunning, setLiveRegenerateRunning] = useState(false);
+  const [liveRegenerateError, setLiveRegenerateError] = useState<string | null>(null);
+  const [hasGeneratedSnapshot, setHasGeneratedSnapshot] = useState(false);
+  const [showGenerateFirstPopup, setShowGenerateFirstPopup] = useState(false);
+  const [muteGenerateFirstPopupUntilGeneration, setMuteGenerateFirstPopupUntilGeneration] = useState(false);
+  const [hideGenerateFirstPopupThisSession, setHideGenerateFirstPopupThisSession] = useState(false);
+  const liveRegenerateTimerRef = useRef<number | null>(null);
+  const liveRegenerateAbortRef = useRef<AbortController | null>(null);
+  const liveRegenerateRequestIdRef = useRef(0);
 
   const [newColorForm, setNewColorForm] = useState<ColorCreate>({
     name: "",
@@ -949,6 +975,59 @@ export default function App() {
   const previewAlt = mosaicResult
     ? "Mosaic preview"
     : "Source image preview";
+  const fallbackSourceImageFile = useMemo(() => {
+    if (!selectedProject || selectedProject.source_image_base64.trim().length === 0) {
+      return null;
+    }
+    const sourceMime =
+      selectedProject.source_image_mime_type.trim().length > 0
+        ? selectedProject.source_image_mime_type
+        : "image/png";
+    try {
+      const buffer = base64ToArrayBuffer(selectedProject.source_image_base64);
+      return new File([buffer], "project-source-image", { type: sourceMime });
+    } catch {
+      return null;
+    }
+  }, [
+    selectedProject?.id,
+    selectedProject?.source_image_base64,
+    selectedProject?.source_image_mime_type,
+  ]);
+  const generationSourceImage = imageFile ?? fallbackSourceImageFile;
+  const hasGenerationSourceImage = generationSourceImage !== null;
+  const maybeShowGenerateFirstPopup = useCallback(() => {
+    if (hideGenerateFirstPopupThisSession || muteGenerateFirstPopupUntilGeneration) {
+      return;
+    }
+    if (!canUseStudio || hasGeneratedSnapshot || !hasGenerationSourceImage) {
+      return;
+    }
+    setShowGenerateFirstPopup(true);
+  }, [
+    canUseStudio,
+    hasGeneratedSnapshot,
+    hasGenerationSourceImage,
+    hideGenerateFirstPopupThisSession,
+    muteGenerateFirstPopupUntilGeneration,
+  ]);
+  const dismissGenerateFirstPopup = useCallback(() => {
+    setShowGenerateFirstPopup(false);
+    setMuteGenerateFirstPopupUntilGeneration(true);
+  }, []);
+
+  const cancelLiveRegeneration = useCallback(() => {
+    if (liveRegenerateTimerRef.current !== null) {
+      window.clearTimeout(liveRegenerateTimerRef.current);
+      liveRegenerateTimerRef.current = null;
+    }
+    if (liveRegenerateAbortRef.current) {
+      liveRegenerateAbortRef.current.abort();
+      liveRegenerateAbortRef.current = null;
+    }
+    setLiveRegeneratePending(false);
+    setLiveRegenerateRunning(false);
+  }, []);
 
   const refreshBootstrap = useCallback(async () => {
     setLoadingBootstrap(true);
@@ -1079,6 +1158,7 @@ export default function App() {
       setAuthSession({
         is_authenticated: false,
         expires_at: null,
+        requires_password_change: false,
         user: null,
       });
       setAuthToken(null);
@@ -1114,6 +1194,12 @@ export default function App() {
       setActiveTab("studio");
     }
   }, [activeTab, isAdmin]);
+
+  useEffect(() => {
+    return () => {
+      cancelLiveRegeneration();
+    };
+  }, [cancelLiveRegeneration]);
 
   useEffect(() => {
     const token = new URLSearchParams(window.location.search).get("share");
@@ -1204,6 +1290,89 @@ export default function App() {
   }, [activePalette]);
 
   useEffect(() => {
+    if (!liveRegenerateEnabled || !canUseStudio || !hasGeneratedSnapshot || !hasGenerationSourceImage) {
+      setLiveRegeneratePending(false);
+      setLiveRegenerateRunning(false);
+      return;
+    }
+
+    if (liveRegenerateTimerRef.current !== null) {
+      window.clearTimeout(liveRegenerateTimerRef.current);
+      liveRegenerateTimerRef.current = null;
+    }
+
+    setLiveRegenerateError(null);
+    setLiveRegeneratePending(true);
+
+    liveRegenerateTimerRef.current = window.setTimeout(() => {
+      liveRegenerateTimerRef.current = null;
+
+      if (!generationSourceImage) {
+        setLiveRegeneratePending(false);
+        return;
+      }
+
+      if (liveRegenerateAbortRef.current) {
+        liveRegenerateAbortRef.current.abort();
+      }
+
+      const controller = new AbortController();
+      liveRegenerateAbortRef.current = controller;
+      const requestId = ++liveRegenerateRequestIdRef.current;
+
+      setLiveRegeneratePending(false);
+      setLiveRegenerateRunning(true);
+
+      void generateMosaic(
+        generationSourceImage,
+        studioForm,
+        includeColorIds,
+        excludeColorIds,
+        controller.signal,
+      )
+        .then((response) => {
+          if (requestId !== liveRegenerateRequestIdRef.current) {
+            return;
+          }
+          setMosaicResult(normalizeMosaicResult(response));
+          setError(null);
+        })
+        .catch((requestError) => {
+          if (controller.signal.aborted || requestId !== liveRegenerateRequestIdRef.current) {
+            return;
+          }
+          setLiveRegenerateError(requestError instanceof Error ? requestError.message : "Ошибка автопересчета.");
+        })
+        .finally(() => {
+          if (requestId !== liveRegenerateRequestIdRef.current) {
+            return;
+          }
+          if (liveRegenerateAbortRef.current === controller) {
+            liveRegenerateAbortRef.current = null;
+          }
+          setLiveRegenerateRunning(false);
+          setLiveRegeneratePending(false);
+        });
+    }, 450);
+
+    return () => {
+      if (liveRegenerateTimerRef.current !== null) {
+        window.clearTimeout(liveRegenerateTimerRef.current);
+        liveRegenerateTimerRef.current = null;
+      }
+    };
+  }, [
+    canUseStudio,
+    excludeColorIds,
+    generationSourceImage,
+    hasGeneratedSnapshot,
+    hasGenerationSourceImage,
+    includeColorIds,
+    liveRegenerateEnabled,
+    studioForm,
+  ]);
+
+  useEffect(() => {
     if (!mosaicResult) {
       setReplaceFromColorId(null);
       setReplaceToColorId(null);
@@ -1289,7 +1458,20 @@ export default function App() {
   }, [selectedProject]);
 
   const setStudioField = <K extends keyof StudioFormState>(field: K, value: StudioFormState[K]) => {
-    setStudioForm((current) => ({ ...current, [field]: value }));
+    setStudioForm((current) => {
+      if (typeof value === "number" && !Number.isFinite(value)) {
+        return current;
+      }
+      return { ...current, [field]: value };
+    });
+  };
+
+  const setStudioFieldFromUser = <K extends keyof StudioFormState>(
+    field: K,
+    value: StudioFormState[K],
+  ) => {
+    setStudioField(field, value);
+    maybeShowGenerateFirstPopup();
   };
 
   const nudgeMosaicOffset = useCallback((deltaXmm: number, deltaYmm: number) => {
@@ -1298,7 +1480,8 @@ export default function App() {
       offsetXmm: Number((current.offsetXmm + deltaXmm).toFixed(3)),
       offsetYmm: Number((current.offsetYmm + deltaYmm).toFixed(3)),
     }));
-  }, []);
+    maybeShowGenerateFirstPopup();
+  }, [maybeShowGenerateFirstPopup]);
 
   const alignMosaicOffset = useCallback(
     (anchor: "top-left" | "top-right" | "bottom-left" | "bottom-right" | "center") => {
@@ -1329,8 +1512,9 @@ export default function App() {
           offsetYmm: Number(guides.centerY.toFixed(3)),
         };
       });
+      maybeShowGenerateFirstPopup();
     },
-    [],
+    [maybeShowGenerateFirstPopup],
   );
 
   const nudgePreviewPan = useCallback((deltaXpx: number, deltaYpx: number) => {
@@ -1403,6 +1587,10 @@ export default function App() {
 
   const applyProjectGeneration = (generation: ProjectGenerationRead, project?: ProjectRead) => {
     setMosaicResult(normalizeMosaicResult(generation.snapshot.mosaic));
+    setHasGeneratedSnapshot(true);
+    setShowGenerateFirstPopup(false);
+    setMuteGenerateFirstPopupUntilGeneration(false);
+    setLiveRegenerateError(null);
     setIncludeColorIds(generation.snapshot.include_color_ids);
     setExcludeColorIds(generation.snapshot.exclude_color_ids);
     setStudioForm((current) => ({
@@ -1454,7 +1642,7 @@ export default function App() {
     if (tab === activeTab && tab === "studio") {
       setError(null);
       setNotice(
-        imageFile
+        hasGenerationSourceImage
           ? 'Вы уже на вкладке "Генерация". Нажмите "Сгенерировать мозаику", чтобы обновить превью.'
           : 'Вы уже на вкладке "Генерация". Сначала загрузите изображение, затем нажмите "Сгенерировать мозаику".',
       );
@@ -1477,6 +1665,7 @@ export default function App() {
       setAuthSession({
         is_authenticated: true,
         expires_at: response.expires_at,
+        requires_password_change: response.requires_password_change,
         user: response.user,
       });
       setNotice(`Вход выполнен: ${response.user.display_name} (${roleLabel(response.user.role)}).`);
@@ -1500,10 +1689,12 @@ export default function App() {
     } catch {
       // Ignore logout API failures and clear local session anyway.
     } finally {
+      cancelLiveRegeneration();
       setAuthToken(null);
       setAuthSession({
         is_authenticated: false,
         expires_at: null,
+        requires_password_change: false,
         user: null,
       });
       setProjects([]);
@@ -1511,6 +1702,11 @@ export default function App() {
       setSelectedProject(null);
       setProjectShares([]);
       setProjectOrders([]);
+      setHasGeneratedSnapshot(false);
+      setShowGenerateFirstPopup(false);
+      setMuteGenerateFirstPopupUntilGeneration(false);
+      setHideGenerateFirstPopupThisSession(false);
+      setLiveRegenerateError(null);
       setAuthBusy(false);
       setNotice("Сессия завершена.");
     }
@@ -1528,6 +1724,7 @@ export default function App() {
     }
     setError(null);
     setStudioForm((current) => ({ ...current, cellSizeMm: Number(nextCell.toFixed(3)) }));
+    maybeShowGenerateFirstPopup();
     setNotice("Параметры сетки применены: размер ячейки пересчитан автоматически.");
   };
 
@@ -1614,14 +1811,17 @@ export default function App() {
     if (mode === "neutral") {
       setIncludeColorIds((items) => [...items, colorId]);
       setExcludeColorIds((items) => items.filter((id) => id !== colorId));
+      maybeShowGenerateFirstPopup();
       return;
     }
     if (mode === "include") {
       setIncludeColorIds((items) => items.filter((id) => id !== colorId));
       setExcludeColorIds((items) => [...items, colorId]);
+      maybeShowGenerateFirstPopup();
       return;
     }
     setExcludeColorIds((items) => items.filter((id) => id !== colorId));
+    maybeShowGenerateFirstPopup();
   };
 
   const resetPreviewTransform = () => {
@@ -1690,9 +1890,14 @@ export default function App() {
 
   const onImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
+    cancelLiveRegeneration();
     setImageFile(file);
     // Reset previous result so preview switches to the newly selected source image.
     setMosaicResult(null);
+    setHasGeneratedSnapshot(false);
+    setShowGenerateFirstPopup(false);
+    setMuteGenerateFirstPopupUntilGeneration(false);
+    setLiveRegenerateError(null);
     setError(null);
     if (imagePreviewUrl) {
       URL.revokeObjectURL(imagePreviewUrl);
@@ -1710,21 +1915,26 @@ export default function App() {
       return;
     }
 
-    if (!imageFile) {
-      setError("Перед генерацией загрузите изображение.");
+    if (!generationSourceImage) {
+      setError("Перед генерацией загрузите изображение или откройте проект с сохраненным исходником.");
       return;
     }
     setBusy(true);
+    cancelLiveRegeneration();
     setError(null);
     setNotice(null);
+    setLiveRegenerateError(null);
     try {
       const response = await generateMosaic(
-        imageFile,
+        generationSourceImage,
         studioForm,
         includeColorIds,
         excludeColorIds,
       );
       setMosaicResult(normalizeMosaicResult(response));
+      setHasGeneratedSnapshot(true);
+      setShowGenerateFirstPopup(false);
+      setMuteGenerateFirstPopupUntilGeneration(false);
       setNotice("Мозаика успешно сгенерирована.");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Ошибка генерации.");
@@ -1771,6 +1981,10 @@ export default function App() {
       });
 
       setMosaicResult(normalizeMosaicResult(response));
+      setHasGeneratedSnapshot(true);
+      setShowGenerateFirstPopup(false);
+      setMuteGenerateFirstPopupUntilGeneration(false);
+      setLiveRegenerateError(null);
       setNotice("Цвет успешно заменен во всей мозаике.");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Ошибка замены цвета.");
@@ -2565,6 +2779,43 @@ export default function App() {
 
       {error && <section className="alert alert-error">{error}</section>}
       {notice && <section className="alert alert-success">{notice}</section>}
+      {showGenerateFirstPopup && (
+        <div className="modal-overlay" onClick={dismissGenerateFirstPopup}>
+          <section
+            className="modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="generate-first-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3 id="generate-first-title">Сначала выполните первый расчет</h3>
+            <p>
+              Параметры меняются, но мозаика появится только после первого нажатия кнопки
+              «Сгенерировать мозаику».
+            </p>
+            <p className="muted">
+              После первого расчета автообновление сможет пересчитывать мозаику автоматически.
+            </p>
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                checked={hideGenerateFirstPopupThisSession}
+                onChange={(event) => setHideGenerateFirstPopupThisSession(event.target.checked)}
+              />
+              Не показывать это сообщение до выхода из аккаунта
+            </label>
+            <div className="actions">
+              <button
+                type="button"
+                className="button-primary"
+                onClick={dismissGenerateFirstPopup}
+              >
+                Понятно
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {activeTab === "studio" && (
         <section className="workspace">
@@ -2603,61 +2854,120 @@ export default function App() {
                   text="Ширина поля (мм)"
                   hint="Физическая ширина рабочей зоны, на которую раскладывается мозаика."
                 />
-                <input
-                  type="number"
-                  min={1}
-                  value={studioForm.fieldWidthMm}
-                  onChange={(event) => setStudioField("fieldWidthMm", Number(event.target.value))}
-                />
+                <div className="slider-row">
+                  <input
+                    type="range"
+                    min={200}
+                    max={10000}
+                    step={10}
+                    className="slider-control"
+                    value={clampNumber(studioForm.fieldWidthMm, 200, 10000)}
+                    onChange={(event) => setStudioFieldFromUser("fieldWidthMm", parseNumberValue(event.target.value))}
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={studioForm.fieldWidthMm}
+                    onChange={(event) => setStudioFieldFromUser("fieldWidthMm", parseNumberValue(event.target.value))}
+                  />
+                </div>
               </label>
               <label>
                 <LabelTitle
                   text="Высота поля (мм)"
                   hint="Физическая высота рабочей зоны, на которую раскладывается мозаика."
                 />
-                <input
-                  type="number"
-                  min={1}
-                  value={studioForm.fieldHeightMm}
-                  onChange={(event) => setStudioField("fieldHeightMm", Number(event.target.value))}
-                />
+                <div className="slider-row">
+                  <input
+                    type="range"
+                    min={200}
+                    max={6000}
+                    step={10}
+                    className="slider-control"
+                    value={clampNumber(studioForm.fieldHeightMm, 200, 6000)}
+                    onChange={(event) => setStudioFieldFromUser("fieldHeightMm", parseNumberValue(event.target.value))}
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={studioForm.fieldHeightMm}
+                    onChange={(event) => setStudioFieldFromUser("fieldHeightMm", parseNumberValue(event.target.value))}
+                  />
+                </div>
               </label>
               <label>
                 <LabelTitle
                   text="Размер ячейки (мм)"
                   hint="Размер одной квадратной плитки. Чем меньше размер, тем больше детализация."
                 />
-                <input
-                  type="number"
-                  min={1}
-                  value={studioForm.cellSizeMm}
-                  onChange={(event) => setStudioField("cellSizeMm", Number(event.target.value))}
-                />
+                <div className="slider-row">
+                  <input
+                    type="range"
+                    min={5}
+                    max={40}
+                    step={0.1}
+                    className="slider-control"
+                    value={clampNumber(studioForm.cellSizeMm, 5, 40)}
+                    onChange={(event) => setStudioFieldFromUser("cellSizeMm", parseNumberValue(event.target.value))}
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    step={0.1}
+                    value={studioForm.cellSizeMm}
+                    onChange={(event) => setStudioFieldFromUser("cellSizeMm", parseNumberValue(event.target.value))}
+                  />
+                </div>
               </label>
               <label>
                 <LabelTitle
                   text="Расстояние между ячейками (мм)"
                   hint="Ширина шва между плитками."
                 />
-                <input
-                  type="number"
-                  min={0}
-                  value={studioForm.gapMm}
-                  onChange={(event) => setStudioField("gapMm", Number(event.target.value))}
-                />
+                <div className="slider-row">
+                  <input
+                    type="range"
+                    min={0}
+                    max={10}
+                    step={0.1}
+                    className="slider-control"
+                    value={clampNumber(studioForm.gapMm, 0, 10)}
+                    onChange={(event) => setStudioFieldFromUser("gapMm", parseNumberValue(event.target.value))}
+                  />
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.1}
+                    value={studioForm.gapMm}
+                    onChange={(event) => setStudioFieldFromUser("gapMm", parseNumberValue(event.target.value))}
+                  />
+                </div>
               </label>
               <label>
                 <LabelTitle
                   text="Макс. цветов"
                   hint="Верхний предел количества цветов плиток в мозаике. Это значение «до N», а не строго N."
                 />
-                <input
-                  type="number"
-                  min={1}
-                  max={Math.max(1, activePalette.length)}
-                  value={studioForm.maxColors}
-                  onChange={(event) => setStudioField("maxColors", Number(event.target.value))}
-                />
+                <div className="slider-row">
+                  <input
+                    type="range"
+                    min={1}
+                    max={Math.max(1, activePalette.length)}
+                    step={1}
+                    className="slider-control"
+                    value={clampNumber(studioForm.maxColors, 1, Math.max(1, activePalette.length))}
+                    onChange={(event) => setStudioFieldFromUser("maxColors", Number(event.target.value))}
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    max={Math.max(1, activePalette.length)}
+                    value={studioForm.maxColors}
+                    onChange={(event) => setStudioFieldFromUser("maxColors", Number(event.target.value))}
+                  />
+                </div>
               </label>
               <label>
                 <LabelTitle
@@ -2667,13 +2977,13 @@ export default function App() {
                 <select
                   value={studioForm.groutColorId ?? ""}
                   onChange={(event) =>
-                    setStudioField(
+                    setStudioFieldFromUser(
                       "groutColorId",
                       event.target.value ? Number(event.target.value) : null,
                     )
                   }
                 >
-                  <option value="">Выберите цвет</option>
+                  <option value="">Выберите цвет заполнения</option>
                   {activeGroutColors.map((color) => (
                     <option key={color.id} value={color.id}>
                       {color.name} ({color.rgb_hex})
@@ -2722,37 +3032,74 @@ export default function App() {
                       text="Смещение X (мм)"
                       hint="Сдвиг мозаики по оси X. Допускаются отрицательные значения, лишняя часть обрезается по рабочему полю."
                     />
-                    <input
-                      type="number"
-                      value={studioForm.offsetXmm}
-                      onChange={(event) => setStudioField("offsetXmm", Number(event.target.value))}
-                    />
+                    <div className="slider-row">
+                      <input
+                        type="range"
+                        min={-5000}
+                        max={5000}
+                        step={0.1}
+                        className="slider-control"
+                        value={clampNumber(studioForm.offsetXmm, -5000, 5000)}
+                        onChange={(event) => setStudioFieldFromUser("offsetXmm", parseNumberValue(event.target.value))}
+                      />
+                      <input
+                        type="number"
+                        step={0.1}
+                        value={studioForm.offsetXmm}
+                        onChange={(event) => setStudioFieldFromUser("offsetXmm", parseNumberValue(event.target.value))}
+                      />
+                    </div>
                   </label>
                   <label>
                     <LabelTitle
                       text="Смещение Y (мм)"
                       hint="Сдвиг мозаики по оси Y. Допускаются отрицательные значения, лишняя часть обрезается по рабочему полю."
                     />
-                    <input
-                      type="number"
-                      value={studioForm.offsetYmm}
-                      onChange={(event) => setStudioField("offsetYmm", Number(event.target.value))}
-                    />
+                    <div className="slider-row">
+                      <input
+                        type="range"
+                        min={-5000}
+                        max={5000}
+                        step={0.1}
+                        className="slider-control"
+                        value={clampNumber(studioForm.offsetYmm, -5000, 5000)}
+                        onChange={(event) => setStudioFieldFromUser("offsetYmm", parseNumberValue(event.target.value))}
+                      />
+                      <input
+                        type="number"
+                        step={0.1}
+                        value={studioForm.offsetYmm}
+                        onChange={(event) => setStudioFieldFromUser("offsetYmm", parseNumberValue(event.target.value))}
+                      />
+                    </div>
                   </label>
                   <label>
                     <LabelTitle
                       text="Шаг позиционирования (мм)"
                       hint="Шаг для кнопок сдвига и горячих клавиш стрелок. Shift+стрелка = крупный шаг, Alt+стрелка = точный шаг."
                     />
-                    <input
-                      type="number"
-                      min={0.1}
-                      step={0.1}
-                      value={positionStepMm}
-                      onChange={(event) =>
-                        setPositionStepMm(Math.max(0.1, Number(event.target.value)))
-                      }
-                    />
+                    <div className="slider-row">
+                      <input
+                        type="range"
+                        min={0.1}
+                        max={500}
+                        step={0.1}
+                        className="slider-control"
+                        value={clampNumber(positionStepMm, 0.1, 500)}
+                        onChange={(event) =>
+                          setPositionStepMm(Math.max(0.1, parseNumberValue(event.target.value)))
+                        }
+                      />
+                      <input
+                        type="number"
+                        min={0.1}
+                        step={0.1}
+                        value={positionStepMm}
+                        onChange={(event) =>
+                          setPositionStepMm(Math.max(0.1, parseNumberValue(event.target.value)))
+                        }
+                      />
+                    </div>
                   </label>
                   <div className="positioning-info">
                     <span>
@@ -2854,8 +3201,8 @@ export default function App() {
                     type="button"
                     className="button-ghost"
                     onClick={() => {
-                      setStudioField("offsetXmm", 0);
-                      setStudioField("offsetYmm", 0);
+                      setStudioFieldFromUser("offsetXmm", 0);
+                      setStudioFieldFromUser("offsetYmm", 0);
                     }}
                     disabled={busy || !canUseStudio}
                   >
@@ -2910,6 +3257,35 @@ export default function App() {
             <p className="muted">
               Кнопка ниже запускает генерацию и обновляет превью с учетом текущих параметров.
             </p>
+            <div className="auto-regenerate-panel">
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={liveRegenerateEnabled}
+                  onChange={(event) => {
+                    const nextValue = event.target.checked;
+                    setLiveRegenerateEnabled(nextValue);
+                    setLiveRegenerateError(null);
+                    if (!nextValue) {
+                      cancelLiveRegeneration();
+                    }
+                  }}
+                />
+                Автообновление мозаики при изменении параметров
+              </label>
+              <p className="muted">
+                {liveRegenerateEnabled
+                  ? hasGeneratedSnapshot
+                    ? liveRegenerateRunning
+                      ? "Идет автопересчет..."
+                      : liveRegeneratePending
+                        ? "Изменение обнаружено, пересчет начнется через 0.45 с."
+                        : "Автообновление включено."
+                    : "Сначала выполните первый расчет кнопкой «Сгенерировать мозаику»."
+                  : "Автообновление выключено. Пересчет запускается только кнопкой."}
+              </p>
+              {liveRegenerateError && <p className="muted auto-regenerate-error">{liveRegenerateError}</p>}
+            </div>
 
             <button
               type="button"

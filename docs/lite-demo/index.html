@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -11,8 +11,8 @@
     .card { background: #fff; border: 1px solid #d1d5db; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
     .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
     label { display: block; font-size: 12px; color: #374151; }
-    input, textarea, button { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px; border: 1px solid #c7ccd4; border-radius: 8px; }
-    textarea { min-height: 82px; resize: vertical; }
+    input, select, textarea, button { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px; border: 1px solid #c7ccd4; border-radius: 8px; }
+    textarea { min-height: 82px; resize: vertical; font-family: Consolas, monospace; }
     .actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 8px; }
     button { cursor: pointer; background: #111827; color: #fff; border: 1px solid #111827; }
     button.secondary { background: #fff; color: #111827; }
@@ -22,61 +22,105 @@
     .chip { display: flex; align-items: center; gap: 6px; font-size: 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 999px; padding: 3px 8px; }
     .dot { width: 12px; height: 12px; border-radius: 999px; border: 1px solid #9ca3af; }
     .canvas-wrap { overflow: auto; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; }
-    canvas { display: block; max-width: 100%; height: auto; }
+    .canvas-wrap canvas { display: block; max-width: 100%; height: auto; }
     .hint { margin-top: 6px; font-size: 12px; color: #6b7280; }
-    @media (max-width: 900px) { .grid, .stats, .actions { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    .subhint { margin-top: 2px; font-size: 12px; color: #5c6675; }
+    .swatches { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .sw { width: 18px; height: 18px; border-radius: 6px; border: 1px solid #aab2bd; }
+    details { margin-top: 10px; }
+    details summary { cursor: pointer; font-size: 13px; color: #374151; }
+    .inline-tools { display: grid; grid-template-columns: 150px 1fr 1fr; gap: 8px; margin-top: 8px; }
+    @media (max-width: 900px) {
+      .grid, .stats, .actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .inline-tools { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
   <div class="app">
-    <h2>Mozaika Lite Demo (GitHub Pages)</h2>
+    <h2>Mozaika Lite Demo</h2>
     <div class="card">
       <div class="grid">
-        <label>Image
+        <label>Изображение
           <input id="file" type="file" accept="image/*" />
+          <div class="subhint">Шаг 1: загрузите фото или картинку.</div>
         </label>
-        <label>Field width (mm)
+        <label>Ширина поля (мм)
           <input id="fieldW" type="number" min="100" value="2000" />
+          <div class="subhint">Физическая ширина стены. Пример: 2000 = 2 метра.</div>
         </label>
-        <label>Field height (mm)
+        <label>Высота поля (мм)
           <input id="fieldH" type="number" min="100" value="1200" />
+          <div class="subhint">Физическая высота стены. Пример: 1200 = 1.2 метра.</div>
         </label>
-        <label>Chip size (mm)
+        <label>Размер чипа (мм)
           <input id="chip" type="number" min="1" value="10" />
+          <div class="subhint">Размер одной плитки. Обычно 10 мм.</div>
         </label>
-        <label>Gap (mm)
+        <label>Шов (мм)
           <input id="gap" type="number" min="0" value="2" />
+          <div class="subhint">Толщина затирки между чипами.</div>
         </label>
-        <label>Max colors
+        <label>Макс. цветов
           <input id="maxColors" type="number" min="2" max="64" value="16" />
+          <div class="subhint">Чем больше число, тем детальнее и дороже мозаика.</div>
         </label>
-        <label>Zoom
+        <label>Увеличение
           <input id="zoom" type="number" step="0.1" min="0.2" max="5" value="1" />
+          <div class="subhint">1 = как есть. Больше 1 - приближение исходного изображения.</div>
         </label>
-        <label>Pan X (chips)
+        <label>Сдвиг X (в чипах)
           <input id="panX" type="number" step="1" value="0" />
+          <div class="subhint">Сдвиг вправо/влево внутри поля.</div>
         </label>
-        <label>Pan Y (chips)
+        <label>Сдвиг Y (в чипах)
           <input id="panY" type="number" step="1" value="0" />
+          <div class="subhint">Сдвиг вверх/вниз внутри поля.</div>
         </label>
-        <label style="grid-column: span 4;">Palette HEX (comma/new line)
-          <textarea id="palette">#111111,#ffffff,#8b5e3c,#d4b48c,#4f5d73,#5f8d4e,#b22222,#f4c542,#d98f5f,#6c757d,#3c6e71,#2a9d8f,#264653,#7b2cbf,#ff7f11,#0077b6</textarea>
+        <label>Готовая палитра
+          <select id="preset">
+            <option value="warm">Теплая</option>
+            <option value="cold">Холодная</option>
+            <option value="contrast">Контрастная</option>
+            <option value="bw">Черно-белая</option>
+          </select>
+          <div class="subhint">Если не уверены, выберите палитру и не трогайте HEX.</div>
         </label>
       </div>
+
+      <div id="presetSwatches" class="swatches"></div>
+
+      <details>
+        <summary>Для опытных: ручные цвета</summary>
+        <div class="hint">
+          HEX - это технический код цвета. Пример: <b>#ff0000</b> = красный.
+          Если это непонятно, оставьте раздел закрытым: всё и так работает.
+        </div>
+        <div class="inline-tools">
+          <input id="picker" type="color" value="#ff0000" />
+          <button id="addColor" type="button" class="secondary">Добавить выбранный цвет</button>
+          <button id="fillPreset" type="button" class="secondary">Заполнить из палитры</button>
+        </div>
+        <label style="margin-top: 8px;">Список HEX-цветов (через запятую или с новой строки)
+          <textarea id="palette" placeholder="#111111, #ffffff, #ff0000"></textarea>
+        </label>
+        <div id="manualInfo" class="hint"></div>
+      </details>
+
       <div class="actions">
-        <button id="generate">Generate mosaic</button>
-        <button id="download" class="secondary">Download PNG</button>
-        <button id="reset" class="secondary">Reset view</button>
+        <button id="generate">Сгенерировать мозаику</button>
+        <button id="download" class="secondary">Скачать PNG</button>
+        <button id="reset" class="secondary">Сбросить вид</button>
       </div>
-      <div class="hint">No backend. Everything runs in browser memory.</div>
+      <div class="hint">Шаг 2: нажмите "Сгенерировать мозаику". Шаг 3: при необходимости скачайте PNG.</div>
     </div>
 
     <div class="card">
       <div class="stats">
-        <div class="stat"><b id="chipsX">0</b><div>chips X</div></div>
-        <div class="stat"><b id="chipsY">0</b><div>chips Y</div></div>
-        <div class="stat"><b id="chipsTotal">0</b><div>total chips</div></div>
-        <div class="stat"><b id="usedColors">0</b><div>used colors</div></div>
+        <div class="stat"><b id="chipsX">0</b><div>чипов по X</div></div>
+        <div class="stat"><b id="chipsY">0</b><div>чипов по Y</div></div>
+        <div class="stat"><b id="chipsTotal">0</b><div>всего чипов</div></div>
+        <div class="stat"><b id="usedColors">0</b><div>использовано цветов</div></div>
       </div>
       <div id="paletteOut" class="palette"></div>
     </div>
@@ -87,135 +131,70 @@
   </div>
 
   <script>
-    const $ = id => document.getElementById(id);
-    const els = ["file","fieldW","fieldH","chip","gap","maxColors","zoom","panX","panY","palette","generate","download","reset","chipsX","chipsY","chipsTotal","usedColors","paletteOut","canvas"].reduce((a,k)=>(a[k]=$(k),a),{});
-    const ctx = els.canvas.getContext("2d");
-    const src = new Image();
+    const $ = (id) => document.getElementById(id), ids = ["file","fieldW","fieldH","chip","gap","maxColors","zoom","panX","panY","preset","picker","palette","generate","download","reset","addColor","fillPreset","chipsX","chipsY","chipsTotal","usedColors","paletteOut","presetSwatches","manualInfo","canvas"];
+    const els = ids.reduce((a, k) => (a[k] = $(k), a), {}), ctx = els.canvas.getContext("2d"), src = new Image();
     let last = null;
-    const defPal = ["#111111","#ffffff","#8b5e3c","#d4b48c","#4f5d73","#5f8d4e","#b22222","#f4c542","#d98f5f","#6c757d","#3c6e71","#2a9d8f","#264653","#7b2cbf","#ff7f11","#0077b6"];
-
-    const clamp = (v,min,max)=>Math.min(max,Math.max(min,v));
-    const hex = s=>{ const v=s.trim().replace(/^#/,""); return v.length===3?`#${v[0]}${v[0]}${v[1]}${v[1]}${v[2]}${v[2]}`:`#${v.slice(0,6)}`.toLowerCase(); };
-    const rgb = h=>{ const n=parseInt(h.slice(1),16); return [n>>16&255,n>>8&255,n&255]; };
-    const dist = (a,b)=>{ const dr=a[0]-b[0],dg=a[1]-b[1],db=a[2]-b[2]; return dr*dr+dg*dg+db*db; };
-    const parsePalette = () => {
-      const raw = els.palette.value.trim();
-      const list = (raw ? raw : defPal.join(",")).split(/[\s,;]+/).filter(Boolean).map(hex).filter(v=>/^#[0-9a-f]{6}$/.test(v));
-      return [...new Set(list)].slice(0,120);
+    const presets = {
+      warm: ["#111111","#f9f4e8","#8b5e3c","#d4b48c","#b22222","#f4c542","#d98f5f","#7a3e2b","#f08a5d","#6c757d","#3c6e71","#264653","#8d5524","#c68642","#e0ac69","#f1c27d"],
+      cold: ["#0b132b","#f8f9fa","#1c2541","#3a506b","#5bc0be","#2ec4b6","#3a86ff","#0077b6","#00b4d8","#90e0ef","#caf0f8","#4f5d75","#4361ee","#4895ef","#577590","#adb5bd"],
+      contrast: ["#111111","#ffffff","#ff3b30","#34c759","#007aff","#ffcc00","#af52de","#ff9500","#00c7be","#ff2d55","#5856d6","#8e8e93","#a2845e","#3c6e71","#2a9d8f","#e76f51"],
+      bw: ["#000000","#202020","#404040","#606060","#808080","#a0a0a0","#c0c0c0","#e0e0e0","#ffffff"]
     };
+    const clamp = (v, mn, mx) => Math.min(mx, Math.max(mn, v)), toHex = (s) => { const v = s.trim().replace(/^#/, ""); return (v.length === 3 ? `#${v[0]}${v[0]}${v[1]}${v[1]}${v[2]}${v[2]}` : `#${v.slice(0,6)}`).toLowerCase(); };
+    const toRgb = (h) => { const n = parseInt(h.slice(1),16); return [n>>16&255,n>>8&255,n&255]; }, dist = (a,b) => { const dr=a[0]-b[0], dg=a[1]-b[1], db=a[2]-b[2]; return dr*dr+dg*dg+db*db; };
+    const nearest = (c, list) => { let bi=0,bv=1e18; for(let i=0;i<list.length;i++){ const d=dist(c,list[i]); if(d<bv){ bv=d; bi=i; } } return bi; };
+    const parseManual = () => els.palette.value.trim().split(/[\s,;]+/).filter(Boolean).map(toHex).filter((x) => /^#[0-9a-f]{6}$/.test(x));
+    const unique = (arr) => [...new Set(arr)].slice(0,120), activePreset = () => presets[els.preset.value] || presets.warm;
+    const getPalette = () => { const m = parseManual(); return unique(m.length ? m : activePreset()); };
 
-    function nearest(c, paletteRgb) {
-      let best=0,bv=1e18;
-      for (let i=0;i<paletteRgb.length;i++) { const d=dist(c,paletteRgb[i]); if (d<bv) { bv=d; best=i; } }
-      return best;
+    function paintPresetSwatches() {
+      els.presetSwatches.innerHTML = "";
+      activePreset().forEach((hex) => { const d = document.createElement("div"); d.className = "sw"; d.title = hex; d.style.background = hex; els.presetSwatches.appendChild(d); });
+    }
+    function updateManualInfo() {
+      const list = parseManual(); els.manualInfo.textContent = list.length ? `Ручных цветов: ${list.length}` : "Ручная палитра не задана. Используется готовая палитра.";
+    }
+    function addPickedColor() {
+      const cur = parseManual(), next = unique(cur.concat([toHex(els.picker.value)])); els.palette.value = next.join(", "); updateManualInfo();
+    }
+    function fillFromPreset() { els.palette.value = activePreset().join(", "); updateManualInfo(); }
+
+    function getCfg() {
+      const fieldW = Math.max(100,+els.fieldW.value||0), fieldH = Math.max(100,+els.fieldH.value||0), chip = Math.max(1,+els.chip.value||0), gap = Math.max(0,+els.gap.value||0);
+      const maxColors = clamp(Math.floor(+els.maxColors.value||16),2,64), zoom = clamp(+els.zoom.value||1,0.2,5), panX = Math.round(+els.panX.value||0), panY = Math.round(+els.panY.value||0);
+      const chipsX = Math.max(1,Math.floor((fieldW+gap)/(chip+gap))), chipsY = Math.max(1,Math.floor((fieldH+gap)/(chip+gap)));
+      return { chipsX,chipsY,chip,gap,maxColors,zoom,panX,panY,palette:getPalette() };
     }
 
-    function getConfig() {
-      const fieldW = Math.max(100, +els.fieldW.value || 0);
-      const fieldH = Math.max(100, +els.fieldH.value || 0);
-      const chip = Math.max(1, +els.chip.value || 0);
-      const gap = Math.max(0, +els.gap.value || 0);
-      const maxColors = clamp(Math.floor(+els.maxColors.value || 16), 2, 64);
-      const zoom = clamp(+els.zoom.value || 1, 0.2, 5);
-      const panX = Math.round(+els.panX.value || 0);
-      const panY = Math.round(+els.panY.value || 0);
-      const chipsX = Math.max(1, Math.floor((fieldW + gap) / (chip + gap)));
-      const chipsY = Math.max(1, Math.floor((fieldH + gap) / (chip + gap)));
-      const palette = parsePalette();
-      return { fieldW, fieldH, chip, gap, maxColors, zoom, panX, panY, chipsX, chipsY, palette };
+    function drawStats(s) {
+      els.chipsX.textContent = s.chipsX; els.chipsY.textContent = s.chipsY; els.chipsTotal.textContent = (s.chipsX*s.chipsY).toLocaleString("ru-RU"); els.usedColors.textContent = s.used.length; els.paletteOut.innerHTML = "";
+      s.used.forEach((x) => { const row = document.createElement("div"); row.className = "chip"; row.innerHTML = `<span class="dot" style="background:${x.hex}"></span>${x.hex} (${x.count})`; els.paletteOut.appendChild(row); });
     }
 
-    function updateStats(s) {
-      els.chipsX.textContent = s.chipsX;
-      els.chipsY.textContent = s.chipsY;
-      els.chipsTotal.textContent = (s.chipsX * s.chipsY).toLocaleString();
-      els.usedColors.textContent = s.used.length;
-      els.paletteOut.innerHTML = "";
-      s.used.forEach(x => {
-        const row = document.createElement("div");
-        row.className = "chip";
-        row.innerHTML = `<span class="dot" style="background:${x.hex}"></span>${x.hex} (${x.count})`;
-        els.paletteOut.appendChild(row);
-      });
-    }
-
-    function buildMosaic() {
-      if (!src.src) return alert("Upload image first");
-      const c = getConfig();
-      if (!c.palette.length) return alert("Palette is empty");
-      const pRgb = c.palette.map(rgb);
-
-      const temp = document.createElement("canvas");
-      temp.width = c.chipsX; temp.height = c.chipsY;
-      const t = temp.getContext("2d", { willReadFrequently: true });
-      t.fillStyle = "#000"; t.fillRect(0,0,temp.width,temp.height);
-
-      const base = Math.min(c.chipsX / src.width, c.chipsY / src.height);
-      const w = src.width * base * c.zoom, h = src.height * base * c.zoom;
-      const x = (c.chipsX - w) / 2 + c.panX, y = (c.chipsY - h) / 2 + c.panY;
+    function build() {
+      if (!src.src) return alert("Сначала выберите изображение.");
+      const c = getCfg(); if (!c.palette.length) return alert("Палитра пустая.");
+      const pRgb = c.palette.map(toRgb), temp = document.createElement("canvas"); temp.width = c.chipsX; temp.height = c.chipsY;
+      const t = temp.getContext("2d", { willReadFrequently: true }); t.fillStyle = "#000"; t.fillRect(0,0,temp.width,temp.height);
+      const base = Math.min(c.chipsX/src.width,c.chipsY/src.height), w = src.width*base*c.zoom, h = src.height*base*c.zoom, x = (c.chipsX-w)/2 + c.panX, y = (c.chipsY-h)/2 + c.panY;
       t.drawImage(src, x, y, w, h);
-
-      const d = t.getImageData(0, 0, c.chipsX, c.chipsY).data;
-      const firstIdx = new Array(c.chipsX * c.chipsY);
-      const hit = new Map();
-      for (let i=0;i<firstIdx.length;i++) {
-        const ci = nearest([d[i*4],d[i*4+1],d[i*4+2]], pRgb);
-        firstIdx[i] = ci;
-        hit.set(ci, (hit.get(ci) || 0) + 1);
-      }
-
-      const top = [...hit.entries()].sort((a,b)=>b[1]-a[1]).slice(0,c.maxColors).map(v=>v[0]);
-      const sel = (top.length ? top : [0]).map(i=>({ hex:c.palette[i], rgb:pRgb[i], count:0 }));
-      const gapPx = Math.max(1, Math.round(c.gap * 2));
-      const cellPx = Math.max(2, Math.round(c.chip * 2));
-      const outW = c.chipsX * (cellPx + gapPx) + gapPx;
-      const outH = c.chipsY * (cellPx + gapPx) + gapPx;
-      els.canvas.width = outW; els.canvas.height = outH;
-      ctx.fillStyle = "#d9d9d9"; ctx.fillRect(0, 0, outW, outH);
-
-      for (let py=0; py<c.chipsY; py++) {
-        for (let px=0; px<c.chipsX; px++) {
-          const idx = py * c.chipsX + px;
-          const col = [d[idx*4], d[idx*4+1], d[idx*4+2]];
-          let best=0,bv=1e18;
-          for (let i=0;i<sel.length;i++) { const k=dist(col, sel[i].rgb); if (k<bv){ bv=k; best=i; } }
-          sel[best].count++;
-          ctx.fillStyle = sel[best].hex;
-          ctx.fillRect(gapPx + px * (cellPx + gapPx), gapPx + py * (cellPx + gapPx), cellPx, cellPx);
-        }
-      }
-
-      const used = sel.filter(x=>x.count>0).sort((a,b)=>b.count-a.count);
-      updateStats({ chipsX:c.chipsX, chipsY:c.chipsY, used });
-      last = { time: Date.now(), cfg: c, used };
+      const d = t.getImageData(0,0,c.chipsX,c.chipsY).data, hit = new Map();
+      for (let i=0;i<c.chipsX*c.chipsY;i++){ const ci = nearest([d[i*4],d[i*4+1],d[i*4+2]],pRgb); hit.set(ci,(hit.get(ci)||0)+1); }
+      const top = [...hit.entries()].sort((a,b)=>b[1]-a[1]).slice(0,c.maxColors).map((x)=>x[0]), sel = (top.length?top:[0]).map((i)=>({hex:c.palette[i],rgb:pRgb[i],count:0}));
+      const gapPx = Math.max(1,Math.round(c.gap*2)), cellPx = Math.max(2,Math.round(c.chip*2)), outW = c.chipsX*(cellPx+gapPx)+gapPx, outH = c.chipsY*(cellPx+gapPx)+gapPx;
+      els.canvas.width = outW; els.canvas.height = outH; ctx.fillStyle = "#d9d9d9"; ctx.fillRect(0,0,outW,outH);
+      for (let py=0;py<c.chipsY;py++){ for(let px=0;px<c.chipsX;px++){ const idx = py*c.chipsX+px, col = [d[idx*4],d[idx*4+1],d[idx*4+2]]; let bi=0,bv=1e18; for(let i=0;i<sel.length;i++){ const k = dist(col,sel[i].rgb); if(k<bv){ bv=k; bi=i; } } sel[bi].count++; ctx.fillStyle = sel[bi].hex; ctx.fillRect(gapPx+px*(cellPx+gapPx),gapPx+py*(cellPx+gapPx),cellPx,cellPx); } }
+      const used = sel.filter((x)=>x.count>0).sort((a,b)=>b.count-a.count); drawStats({ chipsX:c.chipsX, chipsY:c.chipsY, used }); last = { cfg:c, used };
     }
 
-    function resetView() {
-      els.zoom.value = "1";
-      els.panX.value = "0";
-      els.panY.value = "0";
-    }
-
-    els.file.addEventListener("change", e => {
-      const f = e.target.files?.[0];
-      if (!f) return;
-      const r = new FileReader();
-      r.onload = () => { src.src = r.result; };
-      r.readAsDataURL(f);
-    });
-    els.generate.addEventListener("click", buildMosaic);
-    els.reset.addEventListener("click", resetView);
-    els.download.addEventListener("click", () => {
-      if (!last) return alert("Generate first");
-      const a = document.createElement("a");
-      a.href = els.canvas.toDataURL("image/png");
-      a.download = `mozaika-lite-${Date.now()}.png`;
-      a.click();
-    });
-
-    defPal.length && (els.palette.value = defPal.join(","));
-    ctx.fillStyle = "#ffffff"; ctx.fillRect(0,0,els.canvas.width,els.canvas.height);
-    ctx.fillStyle = "#6b7280"; ctx.font = "16px Segoe UI"; ctx.fillText("Upload image and click Generate mosaic", 20, 32);
+    function resetView(){ els.zoom.value = "1"; els.panX.value = "0"; els.panY.value = "0"; }
+    els.file.addEventListener("change",(e)=>{ const f = e.target.files && e.target.files[0]; if(!f) return; const r = new FileReader(); r.onload = () => { src.src = r.result; }; r.readAsDataURL(f); });
+    els.generate.addEventListener("click", build); els.reset.addEventListener("click", resetView); els.addColor.addEventListener("click", addPickedColor); els.fillPreset.addEventListener("click", fillFromPreset);
+    els.preset.addEventListener("change", () => { paintPresetSwatches(); updateManualInfo(); });
+    els.palette.addEventListener("input", updateManualInfo);
+    els.download.addEventListener("click", ()=>{ if(!last) return alert("Сначала сгенерируйте мозаику."); const a=document.createElement("a"); a.href=els.canvas.toDataURL("image/png"); a.download=`mozaika-lite-${Date.now()}.png`; a.click(); });
+    paintPresetSwatches(); updateManualInfo();
+    ctx.fillStyle="#fff"; ctx.fillRect(0,0,els.canvas.width,els.canvas.height); ctx.fillStyle="#6b7280"; ctx.font="16px Segoe UI"; ctx.fillText("Выберите изображение и нажмите «Сгенерировать мозаику».",20,32);
   </script>
 </body>
 </html>

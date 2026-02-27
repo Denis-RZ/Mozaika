@@ -181,6 +181,7 @@ public static class JsonDatabaseFileStorage
                 DefaultFieldHeightMm = item.DefaultFieldHeightMm,
                 DefaultCellSizeMm = item.DefaultCellSizeMm,
                 DefaultGapMm = item.DefaultGapMm,
+                CorsOriginsJson = string.IsNullOrWhiteSpace(item.CorsOriginsJson) ? "[\"*\"]" : item.CorsOriginsJson,
                 CreatedAt = item.CreatedAt,
                 UpdatedAt = item.UpdatedAt,
             }));
@@ -346,6 +347,7 @@ public static class JsonDatabaseFileStorage
                     DefaultFieldHeightMm = item.DefaultFieldHeightMm,
                     DefaultCellSizeMm = item.DefaultCellSizeMm,
                     DefaultGapMm = item.DefaultGapMm,
+                    CorsOriginsJson = item.CorsOriginsJson,
                     CreatedAt = item.CreatedAt,
                     UpdatedAt = item.UpdatedAt,
                 })
@@ -519,6 +521,7 @@ public static class JsonDatabaseFileStorage
         public double DefaultFieldHeightMm { get; set; }
         public double DefaultCellSizeMm { get; set; }
         public double DefaultGapMm { get; set; }
+        public string CorsOriginsJson { get; set; } = "[\"*\"]";
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }

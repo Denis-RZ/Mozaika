@@ -1,5 +1,6 @@
 import type {
   AdminSettingsRead,
+  AuthChangePasswordRequest,
   AuthLoginRequest,
   AuthLoginResponse,
   AuthSessionRead,
@@ -96,6 +97,15 @@ export async function logout(): Promise<void> {
     const detail = await readErrorDetail(response);
     throw new Error(detail);
   }
+}
+
+export async function changePassword(payload: AuthChangePasswordRequest): Promise<AuthSessionRead> {
+  const response = await apiFetch(`${API_BASE}/api/auth/change-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleJsonResponse<AuthSessionRead>(response);
 }
 
 export async function fetchAuthSession(): Promise<AuthSessionRead> {
@@ -212,13 +222,18 @@ export async function deactivateGroutColor(groutColorId: number): Promise<GroutC
 }
 
 export async function generateMosaic(
-  image: File,
+  image: Blob,
   form: StudioFormState,
   includeIds: number[],
   excludeIds: number[],
+  signal?: AbortSignal,
 ): Promise<MosaicGenerateResponse> {
   const data = new FormData();
-  data.set("image", image);
+  if (image instanceof File) {
+    data.set("image", image);
+  } else {
+    data.set("image", image, "source-image.png");
+  }
   data.set("field_width_mm", String(form.fieldWidthMm));
   data.set("field_height_mm", String(form.fieldHeightMm));
   data.set("cell_size_mm", String(form.cellSizeMm));
@@ -239,6 +254,7 @@ export async function generateMosaic(
   const response = await apiFetch(`${API_BASE}/api/mosaic/generate`, {
     method: "POST",
     body: data,
+    signal,
   });
   return handleJsonResponse<MosaicGenerateResponse>(response);
 }

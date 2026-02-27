@@ -1,4 +1,5 @@
 ﻿using Mozaika.Api.Database.Entities;
+using Mozaika.Api.Security;
 
 namespace Mozaika.Api.Contracts;
 
@@ -30,6 +31,7 @@ public static class DtoMapper
         DefaultFieldHeightMm = entity.DefaultFieldHeightMm,
         DefaultCellSizeMm = entity.DefaultCellSizeMm,
         DefaultGapMm = entity.DefaultGapMm,
+        CorsOrigins = [.. RuntimeCorsOriginsStore.ParseOriginsJson(entity.CorsOriginsJson)],
         CreatedAt = entity.CreatedAt,
         UpdatedAt = entity.UpdatedAt,
     };

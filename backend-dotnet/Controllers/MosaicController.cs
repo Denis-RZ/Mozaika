@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using System.Globalization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Mozaika.Api.Contracts;
@@ -21,17 +22,17 @@ public sealed class MosaicController(
     [HttpPost("generate")]
     public async Task<ActionResult<MosaicGenerateResponse>> Generate(
         [FromForm(Name = "image")] IFormFile? image,
-        [FromForm(Name = "field_width_mm")] double? fieldWidthMm,
-        [FromForm(Name = "field_height_mm")] double? fieldHeightMm,
-        [FromForm(Name = "cell_size_mm")] double? cellSizeMm,
-        [FromForm(Name = "gap_mm")] double? gapMm,
+        [FromForm(Name = "field_width_mm")] string? fieldWidthMmRaw,
+        [FromForm(Name = "field_height_mm")] string? fieldHeightMmRaw,
+        [FromForm(Name = "cell_size_mm")] string? cellSizeMmRaw,
+        [FromForm(Name = "gap_mm")] string? gapMmRaw,
         [FromForm(Name = "grout_color_id")] int? groutColorId,
         [FromForm(Name = "grout_color_hex")] string? groutColorHex,
         [FromForm(Name = "max_colors")] int? maxColors,
         [FromForm(Name = "include_color_ids")] string? includeColorIdsRaw,
         [FromForm(Name = "exclude_color_ids")] string? excludeColorIdsRaw,
-        [FromForm(Name = "offset_x_mm")] double offsetXMm = 0,
-        [FromForm(Name = "offset_y_mm")] double offsetYMm = 0
+        [FromForm(Name = "offset_x_mm")] string? offsetXMmRaw,
+        [FromForm(Name = "offset_y_mm")] string? offsetYMmRaw
     )
     {
         var authError = RequireAnyRole(AppRoles.Admin, AppRoles.Customer);
@@ -81,6 +82,39 @@ public sealed class MosaicController(
         {
             return BadRequest(new ApiError(ex.Message));
         }
+
+        if (!TryParseOptionalDouble(fieldWidthMmRaw, out var fieldWidthMm))
+        {
+            return BadRequest(new ApiError("Параметр field_width_mm должен быть числом (например: 1200, 1200.5 или 1200,5)."));
+        }
+
+        if (!TryParseOptionalDouble(fieldHeightMmRaw, out var fieldHeightMm))
+        {
+            return BadRequest(new ApiError("Параметр field_height_mm должен быть числом (например: 1200, 1200.5 или 1200,5)."));
+        }
+
+        if (!TryParseOptionalDouble(cellSizeMmRaw, out var cellSizeMm))
+        {
+            return BadRequest(new ApiError("Параметр cell_size_mm должен быть числом (например: 10, 10.5 или 10,5)."));
+        }
+
+        if (!TryParseOptionalDouble(gapMmRaw, out var gapMm))
+        {
+            return BadRequest(new ApiError("Параметр gap_mm должен быть числом (например: 2, 2.5 или 2,5)."));
+        }
+
+        if (!TryParseOptionalDouble(offsetXMmRaw, out var parsedOffsetX))
+        {
+            return BadRequest(new ApiError("Параметр offset_x_mm должен быть числом (например: 0, -25.5 или -25,5)."));
+        }
+
+        if (!TryParseOptionalDouble(offsetYMmRaw, out var parsedOffsetY))
+        {
+            return BadRequest(new ApiError("Параметр offset_y_mm должен быть числом (например: 0, -25.5 или -25,5)."));
+        }
+
+        var offsetXMm = parsedOffsetX ?? 0d;
+        var offsetYMm = parsedOffsetY ?? 0d;
 
         var settings = await DbHelpers.GetOrCreateSettingsAsync(dbContext);
         var resolvedFieldWidth = fieldWidthMm ?? settings.DefaultFieldWidthMm;
@@ -239,6 +273,42 @@ public sealed class MosaicController(
         {
             throw new ArgumentException("Поля include_color_ids/exclude_color_ids должны содержать целые id через запятую.");
         }
+    }
+
+    private static bool TryParseOptionalDouble(string? raw, out double? value)
+    {
+        value = null;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return true;
+        }
+
+        if (TryParseFlexibleDouble(raw, out var parsed))
+        {
+            value = parsed;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryParseFlexibleDouble(string raw, out double value)
+    {
+        const NumberStyles style = NumberStyles.Float | NumberStyles.AllowThousands;
+        var trimmed = raw.Trim();
+
+        if (double.TryParse(trimmed, style, CultureInfo.InvariantCulture, out value))
+        {
+            return true;
+        }
+
+        if (double.TryParse(trimmed, style, CultureInfo.CurrentCulture, out value))
+        {
+            return true;
+        }
+
+        var normalized = trimmed.Replace(" ", string.Empty).Replace(',', '.');
+        return double.TryParse(normalized, style, CultureInfo.InvariantCulture, out value);
     }
 
     private async Task<IActionResult> Export(MosaicExportRequest payload, MosaicExportFormat format)

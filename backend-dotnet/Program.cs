@@ -25,6 +25,7 @@ builder.Services.AddScoped<MosaicExportService>();
 builder.Services.AddScoped<ProjectStorageService>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<ProjectWorkflowService>();
+builder.Services.AddSingleton<AppSettingsDatabaseConfigWriter>();
 
 builder.Services.AddDbContext<MozaikaDbContext>((serviceProvider, optionsBuilder) =>
 {
@@ -67,17 +68,16 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var corsOrigins = builder.Configuration.GetSection("Mozaika:CorsOrigins").Get<string[]>() ?? ["*"];
+var runtimeCorsOriginsStore = new RuntimeCorsOriginsStore(corsOrigins);
+builder.Services.AddSingleton(runtimeCorsOriginsStore);
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
-        if (corsOrigins.Any(origin => origin == "*"))
-        {
-            policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
-            return;
-        }
-
-        policy.WithOrigins(corsOrigins).AllowAnyHeader().AllowAnyMethod();
+        policy
+            .SetIsOriginAllowed(origin => runtimeCorsOriginsStore.IsAllowed(origin))
+            .AllowAnyHeader()
+            .AllowAnyMethod();
     });
 });
 
@@ -88,9 +88,22 @@ using (var scope = app.Services.CreateScope())
     var dbContext = scope.ServiceProvider.GetRequiredService<MozaikaDbContext>();
     var authOptions = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<AuthOptions>>().Value;
     var jsonDatabaseSync = scope.ServiceProvider.GetRequiredService<IJsonDatabaseSynchronizationService>();
+    var corsStore = scope.ServiceProvider.GetRequiredService<RuntimeCorsOriginsStore>();
 
     await jsonDatabaseSync.ImportFromFileIfEnabledAsync(dbContext);
     await DbInitializer.SeedAsync(dbContext, authOptions);
+    var settings = await DbHelpers.GetOrCreateSettingsAsync(dbContext);
+    var persistedCorsOrigins = RuntimeCorsOriginsStore.ParseOriginsJson(settings.CorsOriginsJson);
+    if (persistedCorsOrigins.Length == 0)
+    {
+        var fallbackCorsOrigins = corsStore.GetSnapshot();
+        settings.CorsOriginsJson = RuntimeCorsOriginsStore.SerializeOrigins(fallbackCorsOrigins);
+        settings.UpdatedAt = DateTime.UtcNow;
+        await dbContext.SaveChangesAsync();
+        persistedCorsOrigins = fallbackCorsOrigins;
+    }
+
+    corsStore.Set(persistedCorsOrigins);
     await jsonDatabaseSync.PersistToFileIfEnabledAsync(dbContext);
 }
 

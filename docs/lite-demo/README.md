@@ -28,5 +28,10 @@ Open:
 
 GitHub Pages:
 
-- publish repository with `docs` as Pages source
-- open `/lite-demo/`
+- Деплой идёт через workflow (Actions → Deploy Lite Demo to GitHub Pages).
+- Ссылка на демо: `https://<org-or-user>.github.io/<repo>/` (редирект на `/lite-demo/`).
+
+**Как показать страницу заказчику, не открывая репозиторий:**
+
+1. В настройках репозитория: **Settings → General → Danger zone → Change repository visibility → Make private**.
+2. Pages при этом остаётся доступен по той же публичной ссылке — заказчик открывает только собранный сайт, без доступа к коду и без возможности клонировать репозиторий.

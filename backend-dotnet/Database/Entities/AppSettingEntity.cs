@@ -22,6 +22,9 @@ public sealed class AppSettingEntity
     [Column("default_gap_mm")]
     public double DefaultGapMm { get; set; } = 2.0;
 
+    [Column("cors_origins_json")]
+    public string CorsOriginsJson { get; set; } = "[\"*\"]";
+
     [Column("created_at")]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
